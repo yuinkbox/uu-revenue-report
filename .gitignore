@@ -13,6 +13,7 @@ dist-ssr
 build
 *.tsbuildinfo
 *.local
+球房数字化工具·业务交接文档.docx
 
 # Editor directories and files
 .vscode/*
