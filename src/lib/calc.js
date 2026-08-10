@@ -7,25 +7,20 @@ export function toNumber(v) {
 
 export function totalRevenue(report) {
   if (!report) return 0;
-  const cash = toNumber(report.cashReceived);
-  const bank = toNumber(report.reconciliation?.bankReceived);
-  const deposit = toNumber(report.reconciliation?.cashDeposit);
   const grouponAmount = (report.groupon || []).reduce(
     (sum, g) => sum + toNumber(g.verifyAmount) - toNumber(g.refundAmount),
     0,
   );
-  if (cash > 0 || bank > 0) {
-    // 资金口径：当日营收 = 现金 + 农商卡到账 − 现金存入 + 团购核销（未提现）
-    return round2(cash + bank - deposit + grouponAmount);
-  }
   const breakdown =
     toNumber(report.revenue.table) +
     toNumber(report.revenue.product) +
     toNumber(report.revenue.coach) +
     toNumber(report.revenue.other);
   if (breakdown > 0) {
+    // 经营收入 = 商云宝营业额 + 团购核销净额（未提现）
     return round2(breakdown + grouponAmount);
   }
+  // 只填总额时以用户填的总数为准
   return toNumber(report.quickRevenue);
 }
 

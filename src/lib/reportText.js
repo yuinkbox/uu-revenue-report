@@ -93,7 +93,7 @@ export function buildWeChatText(report, metrics, settings, version = "shareholde
     const rm = reconcileMetrics(report, settings);
     const direct = directRevenue(report);
     parts.push("【对账结论】");
-    parts.push(`当日营收 ¥${money(metrics.total)}（现金+农商卡−存现+团购核销未提现）｜ 商云宝参考 ¥${money(direct)}`);
+    parts.push(`总营收（经营收入）¥${money(metrics.total)}（商云宝营业额+团购核销净额）｜ 储值充值 ¥${money(report.member.rechargeAmount)}（预收款）`);
     parts.push(
       `现场实收 ¥${money(rm.actualReceived)} ｜ 应到账 ¥${money(rm.expectedRevenue)} ｜ 差异 ${signedMoney(rm.diff)}（${rm.tier === "normal" ? "正常" : rm.tier === "explained" ? "已解释" : "待查"}）`
     );

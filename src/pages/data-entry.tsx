@@ -244,7 +244,12 @@ export default function DataEntry({
       />
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="总营收" value={money(metrics.total)} icon={<Banknote className="size-4" />} />
+        <MetricCard
+          label="总营收（经营收入）"
+          value={money(metrics.total)}
+          hint="商云宝营业额 + 团购核销净额"
+          icon={<Banknote className="size-4" />}
+        />
         <MetricCard
           label="客单价"
           value={ticket === null ? "-" : money(ticket)}
@@ -317,7 +322,7 @@ export default function DataEntry({
 
         <SectionCard
           title="营收数据"
-          subtitle="总营收 = 现金 + 农商卡 − 存现 + 团购核销；台桌/商品/教练为商云宝参考（辅助核对）"
+          subtitle="总营收 = 商云宝营业额 + 团购核销净额（经营收入口径，不含储值充值）"
           icon={<Banknote className="size-4" />}
         >
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -433,7 +438,7 @@ export default function DataEntry({
 
         <SectionCard
           title="现金与银行对账"
-          subtitle="当日营收以资金为准（现金+农商卡−存现+团购核销），商云宝数据仅作参考核对"
+          subtitle="总营收按经营收入口径；现场实收与应到账用于核对商云宝"
           icon={<Banknote className="size-4" />}
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -451,14 +456,19 @@ export default function DataEntry({
             <table className="w-full text-[13px]">
               <tbody>
                 <tr className="border-b bg-muted/40">
-                  <td className="px-3 py-2 font-medium">当日营收（资金口径）</td>
+                  <td className="px-3 py-2 font-medium">总营收（经营收入）</td>
                   <td className="nums px-3 py-2 text-right font-semibold">{money(metrics.total)}</td>
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">现金+农商卡−存现+团购核销</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">商云宝营业额+团购核销净额</td>
                 </tr>
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">商云宝营业额（参考）</td>
                   <td className="nums px-3 py-2 text-right">{money(direct)}</td>
                   <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">台桌+商品+教练</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">储值充值（预收款·不计入营收）</td>
+                  <td className="nums px-3 py-2 text-right">{money(report.member.rechargeAmount)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">新会员+老会员充值</td>
                 </tr>
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">现场实收 / 应到账</td>

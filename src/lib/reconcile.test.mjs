@@ -97,12 +97,27 @@ const moneyBased = {
   reconciliation: { bankReceived: 1000, cashDeposit: 200, diffReason: "", diffStatus: "" },
   groupon: [{ platform: "美团", verifyCount: 1, verifyAmount: 300 }]
 };
-assert(totalRevenue(moneyBased) === 1600, "当日营收 = 现金 + 农商卡 − 存现 + 团购核销（500+1000-200+300）");
+assert(totalRevenue(moneyBased) === 480, "总营收（经营收入）= 商云宝营业额 + 团购核销净额，不含现金/银行（180+300）");
 const refundNet = {
   ...withGroupon,
   groupon: [{ platform: "美团", verifyCount: 2, verifyAmount: 100, refundCount: 1, refundAmount: 30 }]
 };
 assert(totalRevenue(refundNet) === 250, "团购按净额计入营收（180+100-30=250）");
+
+const rechargeOnly = {
+  date: "2026-08-09",
+  periodType: "day",
+  revenue: { table: 100, product: 0, coach: 0, other: 0 },
+  quickRevenue: "",
+  table: { openCount: 0, openMinutes: 0, salableMinutes: 100, peakHours: "" },
+  products: [],
+  abnormal: [],
+  member: { rechargeAmount: 1000, consumeAmount: 0 },
+  groupon: [{ platform: "美团", verifyCount: 1, verifyAmount: 50 }],
+  cashReceived: 0,
+  reconciliation: { bankReceived: 0, cashDeposit: 0, diffReason: "", diffStatus: "" }
+};
+assert(totalRevenue(rechargeOnly) === 150, "经营收入不含储值充值（100+50，充值1000为预收款）");
 
 const threeCards = {
   date: "2026-08-08",

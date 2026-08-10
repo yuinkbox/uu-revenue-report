@@ -56,7 +56,7 @@ function reportRows(report, metrics, settings, version = "shareholder") {
   const rows = [
     ["日期", report.date],
     ["门店", report.storeName || settings.storeName],
-    ["总营收", money(metrics.total)],
+    ["总营收（经营收入）", money(metrics.total)],
     ["环比上期", rate(metrics.periodMom)],
     [
       report.periodType === "day" || report.periodType === "week" ? "月目标完成率" : "本期目标达成率",
@@ -79,7 +79,7 @@ function reportRows(report, metrics, settings, version = "shareholder") {
   rows.push(["新会员充值", money(report.member.newMemberRecharge)]);
   rows.push(["老会员充值", money(report.member.existingMemberRecharge)]);
   rows.push([
-    "充值合计",
+    "充值合计（预收款·不计入营收）",
     money(
       toNumber(report.member.newMemberRecharge) + toNumber(report.member.existingMemberRecharge) > 0
         ? toNumber(report.member.newMemberRecharge) + toNumber(report.member.existingMemberRecharge)

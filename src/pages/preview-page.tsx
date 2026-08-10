@@ -302,14 +302,19 @@ export default function PreviewPage({
             <table className="w-full text-[13px]">
               <tbody>
                 <tr className="border-b bg-muted/40">
-                  <td className="px-3 py-2 font-medium">当日营收（资金口径）</td>
+                  <td className="px-3 py-2 font-medium">总营收（经营收入）</td>
                   <td className="nums px-3 py-2 text-right font-semibold">{money(metrics.total)}</td>
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">现金+农商卡−存现+团购核销</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">商云宝营业额+团购核销净额</td>
                 </tr>
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">商云宝营业额（参考）</td>
                   <td className="nums px-3 py-2 text-right">{money(direct)}</td>
                   <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">台桌+商品+教练</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">储值充值（预收款·不计入营收）</td>
+                  <td className="nums px-3 py-2 text-right">{money(report.member.rechargeAmount)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">新会员+老会员充值</td>
                 </tr>
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">现场实收 / 应到账</td>
