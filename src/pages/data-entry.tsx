@@ -7,7 +7,6 @@ import {
   FolderSearch,
   RefreshCw,
   Save,
-  Sparkles,
   Table2,
   Target,
   TrendingUp,
@@ -45,7 +44,6 @@ export default function DataEntry({
   onChange,
   onSave,
   onPreview,
-  onLoadSample,
   onGoImport,
 }: {
   report: Report;
@@ -54,7 +52,6 @@ export default function DataEntry({
   onChange: (r: Report) => void;
   onSave: () => void;
   onPreview: () => void;
-  onLoadSample: () => void;
   onGoImport: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -237,9 +234,6 @@ export default function DataEntry({
             </Button>
             <Button variant="outline" onClick={onGoImport}>
               <Upload /> 手动导入
-            </Button>
-            <Button variant="ghost" onClick={onLoadSample}>
-              <Sparkles /> 载入示例
             </Button>
             <Button variant="outline" onClick={onSave}>
               <Save /> 保存

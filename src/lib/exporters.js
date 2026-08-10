@@ -17,6 +17,33 @@ import html2canvas from "html2canvas";
 import { directRevenue, reconcileMetrics, round2, formatPercent, toNumber, topProducts } from "./calc";
 import { signedMoney } from "./format";
 
+function blobToDataUrl(blob) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * 保存文件：桌面版弹窗选择保存位置；浏览器版直接下载。
+ */
+export async function saveViaDialog(filename, blob) {
+  const api = window.pywebview?.api;
+  if (api?.save_file) {
+    try {
+      const dataUrl = await blobToDataUrl(blob);
+      const result = await api.save_file(dataUrl, filename);
+      if (String(result).includes("saved")) return true;
+      if (String(result).includes("cancelled")) return false;
+    } catch {
+      // 弹窗失败则退回浏览器下载
+    }
+  }
+  saveAs(blob, filename);
+  return false;
+}
+
 function money(v) {
   return `¥${round2(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -113,7 +140,11 @@ export function exportExcel(report, metrics, settings, version = "shareholder") 
   ws["!cols"] = [{ wch: 18 }, { wch: 30 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "日报");
-  XLSX.writeFile(wb, `营收日报_${report.date}.xlsx`);
+  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  return saveViaDialog(`营收报告_${report.date}.xlsx`, blob);
 }
 
 export async function exportWord(report, metrics, settings, version = "shareholder") {
@@ -167,7 +198,21 @@ export async function exportWord(report, metrics, settings, version = "sharehold
   });
 
   const blob = await Packer.toBlob(doc);
-  saveAs(blob, `营收日报_${report.date}.docx`);
+  return saveViaDialog(`营收报告_${report.date}.docx`, blob);
+}
+
+export async function exportReportData(report) {
+  const payload = JSON.stringify(
+    {
+      report,
+      exportedAt: new Date().toISOString(),
+      app: "UU 经营报告",
+    },
+    null,
+    2,
+  );
+  const blob = new Blob([payload], { type: "application/json" });
+  return saveViaDialog(`报告数据_${report.date}.json`, blob);
 }
 
 export async function exportPDF(report, metrics, settings) {

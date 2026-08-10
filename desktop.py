@@ -147,6 +147,25 @@ class Api:
         except Exception as exc:
             return f"error:{exc}"
 
+    def save_file(self, data_url, default_name):
+        try:
+            if not data_url or "," not in data_url:
+                return "error:empty"
+            payload = base64.b64decode(data_url.split(",", 1)[1])
+            window = webview.windows[0]
+            result = window.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=default_name,
+            )
+            if not result:
+                return "cancelled"
+            path = result if isinstance(result, str) else result[0]
+            with open(path, "wb") as f:
+                f.write(payload)
+            return "saved"
+        except Exception as exc:
+            return f"error:{exc}"
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):

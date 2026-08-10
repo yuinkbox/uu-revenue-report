@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Copy,
   FileDown,
+  FileJson,
   FileSpreadsheet,
   FileText,
   ImageDown,
@@ -20,7 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import PageHeader from "@/components/page-header";
 import { averageTicket, directRevenue, productSummary, reconcileMetrics, reportMetrics, toNumber } from "@/lib/calc";
-import { exportExcel, exportImage, exportPDF, exportWord } from "@/lib/exporters";
+import { exportExcel, exportImage, exportPDF, exportReportData, exportWord } from "@/lib/exporters";
 import { buildWeChatText } from "@/lib/reportText";
 import { money, signedMoney, signedRate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -138,6 +139,9 @@ export default function PreviewPage({
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => exportWord(report, metrics, settings)}>
                   <FileText /> Word 文档
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportReportData(report)}>
+                  <FileJson /> 数据 JSON
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => exportImage(report)}>
                   <ImageDown /> 长图 PNG

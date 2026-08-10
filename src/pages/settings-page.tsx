@@ -46,10 +46,10 @@ export default function SettingsPage({
         actions={
           <>
             <Button variant="outline" onClick={() => fileRef.current?.click()}>
-              <Database /> 导入备份
+              <Database /> 导入全部数据
             </Button>
             <Button variant="outline" onClick={onExportBackup}>
-              <Database /> 导出备份
+              <Database /> 导出全部数据
             </Button>
             <Button onClick={onSave}>
               <Save /> 保存设置
@@ -93,7 +93,9 @@ export default function SettingsPage({
             <span>
               数据文件夹：<span className="nums font-medium text-foreground">{dataDir || "exe 旁的「数据」文件夹"}</span>
               <br />
-              多台电脑共用时，可在 exe 旁的「配置.json」里指定同一份数据文件夹（如网盘同步目录、共享盘），员工版和店长版即数据互通。
+              多台电脑共用时，可在 exe 旁的「配置.json」里指定同一份数据文件夹（如网盘同步目录、共享盘）。
+              <br />
+              「导出全部数据」= 把报告和设置存成一个 JSON 文件，用于换电脑迁移或手动存档；「导入全部数据」= 从该文件恢复。
             </span>
           </div>
         </SectionCard>

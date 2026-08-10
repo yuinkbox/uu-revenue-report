@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { saveAs } from "file-saver";
 import { toast } from "sonner";
 import AppSidebar from "@/components/app-sidebar";
 import { Toaster } from "@/components/ui/sonner";
@@ -9,8 +8,8 @@ import ImportPage from "@/pages/import-page";
 import PreviewPage from "@/pages/preview-page";
 import SettingsPage from "@/pages/settings-page";
 import { totalRevenue } from "@/lib/calc";
+import { saveViaDialog } from "@/lib/exporters";
 import { mergeImportPatch } from "@/lib/importers";
-import { sampleReport } from "@/lib/sample";
 import {
   defaultReportDate,
   defaultSettings,
@@ -154,11 +153,6 @@ export default function App() {
     toast.success("报告已生成");
   };
 
-  const handleLoadSample = () => {
-    setDraft(sampleReport(draft.date || todayString(), settings) as unknown as Report);
-    toast.success("示例数据已载入，可直接编辑");
-  };
-
   const handleView = (report: Report) => {
     setDraft({ ...report, storeName: "铜陵UU台球俱乐部" });
     setPage("preview");
@@ -184,11 +178,11 @@ export default function App() {
     toast.success("导入数据已应用到录入页");
   };
 
-  const handleExportBackup = () => {
+  const handleExportBackup = async () => {
     const payload = { settings, reports, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    saveAs(blob, `UU经营报告备份_${todayString()}.json`);
-    toast.success("备份已导出");
+    const saved = await saveViaDialog(`UU经营报告数据_${todayString()}.json`, blob);
+    if (saved) toast.success("全部数据已导出");
   };
 
   const handleImportBackup = (file: File) => {
@@ -229,7 +223,6 @@ export default function App() {
             onChange={setDraft}
             onSave={handleSave}
             onPreview={handlePreview}
-            onLoadSample={handleLoadSample}
             onGoImport={() => setPage("import")}
           />
         ) : null}
