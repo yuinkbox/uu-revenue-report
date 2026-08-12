@@ -1,4 +1,12 @@
-import { averageCost, directRevenue, productSummary, reconcileMetrics, reportMetrics, totalRevenue } from "./calc.js";
+import {
+  averageCost,
+  directRevenue,
+  productSummary,
+  reconcileDiagnostics,
+  reconcileMetrics,
+  reportMetrics,
+  totalRevenue,
+} from "./calc.js";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -67,7 +75,7 @@ const withGroupon = {
 assert(totalRevenue(withGroupon) === 210, "总营收 = 直营分项 + 团购核销金额（100+50+30+20+10）");
 assert(directRevenue(withGroupon) === 180, "商云宝营业额不含团购核销");
 const rmG = reconcileMetrics(withGroupon, { reconcileTolerance: 3 });
-assert(rmG.expectedRevenue === 230, "应到账 = 商云宝营业额 + 充值 - 储值卡消费（不含团购与礼金卡）");
+assert(rmG.expectedRevenue === 230, "应到账 = 营业额 + 充值 − 储值卡消费（不含团购；本用例礼金卡消费为 0）");
 const sharesG = reportMetrics(withGroupon, [], {}).shares;
 assert(sharesG.some((s) => s.key === "groupon" && s.value === 30), "收入结构含团购核销项");
 
@@ -136,9 +144,78 @@ const threeCards = {
   reconciliation: { bankReceived: 0, cashDeposit: 0, diffReason: "", diffStatus: "" }
 };
 assert(
-  reconcileMetrics(threeCards, { reconcileTolerance: 3 }).expectedRevenue === 1300,
-  "礼金卡消费不参与对账：1000+500-200=1300"
+  reconcileMetrics(threeCards, { reconcileTolerance: 3 }).expectedRevenue === 1150,
+  "礼金卡/台费卡消费参与对账：1000+500-200-150=1150"
 );
+const withTableRecharge = {
+  ...threeCards,
+  member: { ...threeCards.member, tableCardRecharge: 100 }
+};
+assert(
+  reconcileMetrics(withTableRecharge, { reconcileTolerance: 3 }).expectedRevenue === 1250,
+  "台费卡充值计入应到账：1000+500+100-200-150=1250"
+);
+
+// 8/11 真实案例：应到账 = 2530.38 + 3000 - 983.55 - 72.03 = 4474.8 = 商云宝流水
+const real0811 = {
+  date: "2026-08-11",
+  revenue: { table: 453.31, product: 800.76, coach: 1276.31, other: 0 },
+  quickRevenue: "",
+  table: { openCount: 0, openMinutes: 0, salableMinutes: 100, peakHours: "" },
+  products: [],
+  abnormal: [],
+  member: {
+    rechargeAmount: 3000,
+    tableCardRecharge: 0,
+    consumeAmount: 983.55,
+    giftCardConsume: 72.03
+  },
+  cashReceived: 4474.8,
+  reconciliation: { bankReceived: 0, cashDeposit: 0, diffReason: "", diffStatus: "" },
+  groupon: []
+};
+const rm811 = reconcileMetrics(real0811, { reconcileTolerance: 3 });
+assert(Math.abs(rm811.expectedRevenue - 4474.8) < 0.001, "8/11 应到账 = 营业额+充值−储值消费−台费卡消费 = 4474.8");
+assert(Math.abs(rm811.actualReceived - 4474.8) < 0.001, "8/11 实收 = 4474.8");
+assert(Math.abs(rm811.diff) < 0.001 && rm811.tier === "normal", "8/11 差异为 0");
+
+// 累计差额：8/10 少 11.2、8/11 多 11.2 → 累计为 0（到账时间差特征）
+const user0811 = {
+  ...real0811,
+  cashReceived: 70,
+  reconciliation: { bankReceived: 4416, cashDeposit: 0, diffReason: "", diffStatus: "" }
+};
+const prev0810 = {
+  ...user0811,
+  date: "2026-08-10",
+  cashReceived: 60,
+  reconciliation: { bankReceived: 4403.6, cashDeposit: 0, diffReason: "", diffStatus: "" }
+};
+assert(reconcileMetrics(user0811, { reconcileTolerance: 3 }).diff === 11.2, "8/11 用户数据差额 = +11.2");
+const mTot = reportMetrics(user0811, [prev0810], {});
+assert(mTot.reconcileCount === 2 && Math.abs(mTot.reconcileTotal) < 0.001, "累计差额 = 8/10(-11.2) + 8/11(+11.2) = 0");
+const diag = reconcileDiagnostics(user0811, mTot, {});
+assert(diag.some((l) => l.includes("到账时间差")), "累计差额接近 0 时提示到账时间差");
+
+const mOne = reportMetrics(user0811, [], {});
+assert(mOne.reconcileTotal === 11.2 && mOne.reconcileCount === 1, "单日累计差额 = 当日差异");
+assert(reconcileDiagnostics(user0811, mOne, {}).length === 0, "只有一份日报时不提示累计差额");
+
+// 团购结算到账：核销当天未到账，实收剔除结算款；待收 = 核销净额 − 结算
+const withSettled = {
+  ...withGroupon,
+  groupon: [
+    { platform: "美团", verifyCount: 2, verifyAmount: 20, settledAmount: 8 },
+    { platform: "抖音", verifyCount: 1, verifyAmount: 10, settledAmount: 2 }
+  ],
+  cashReceived: 100,
+  reconciliation: { bankReceived: 200, cashDeposit: 0, diffReason: "", diffStatus: "" }
+};
+const rmS = reconcileMetrics(withSettled, { reconcileTolerance: 3 });
+assert(rmS.actualReceived === 290, "实收剔除团购结算：100+200-10=290");
+const mS = reportMetrics(withSettled, [], {});
+assert(mS.settledAmount === 10 && mS.pendingToday === 20 && mS.pendingTotal === 20, "团购结算 10、待收 20");
+assert(totalRevenue(withSettled) === 210, "结算到账不影响经营收入");
 
 const prodReport = {
   date: "2026-08-08",

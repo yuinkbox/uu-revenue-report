@@ -49,16 +49,28 @@ export function round2(value) {
   return Math.round(toNumber(value) * 100) / 100;
 }
 
+/** 团购平台当日结算到账（不计入现场实收）。 */
+export function grouponSettledAmount(report) {
+  return round2(
+    (report?.groupon || []).reduce((sum, g) => sum + toNumber(g.settledAmount), 0),
+  );
+}
+
 export function reconcileMetrics(report, settings) {
+  // 应到账 = 商云宝营业额 + 储值卡充值 + 台费卡充值 − 储值卡消费 − 台费卡/礼金卡消费
   const expectedRevenue = round2(
     directRevenue(report) +
-      toNumber(report.member?.rechargeAmount) -
-      toNumber(report.member?.consumeAmount)
+      toNumber(report.member?.rechargeAmount) +
+      toNumber(report.member?.tableCardRecharge) -
+      toNumber(report.member?.consumeAmount) -
+      toNumber(report.member?.giftCardConsume)
   );
+  // 实收 = 现金 + 农商卡入账总额 − 现金存入 − 团购平台结算到账
   const actualReceived = round2(
     toNumber(report.cashReceived) +
       toNumber(report.reconciliation?.bankReceived) -
-      toNumber(report.reconciliation?.cashDeposit)
+      toNumber(report.reconciliation?.cashDeposit) -
+      grouponSettledAmount(report)
   );
   const diff = round2(actualReceived - expectedRevenue);
   const tolerance = toNumber(settings?.reconcileTolerance) || 3;
@@ -67,6 +79,43 @@ export function reconcileMetrics(report, settings) {
     tier = report.reconciliation?.diffStatus === "explained" ? "explained" : "pending";
   }
   return { expectedRevenue, actualReceived, diff, tier };
+}
+
+/** 对账差额自动诊断：根据已录入数据给出候选原因提示。 */
+export function reconcileDiagnostics(report, metrics, settings) {
+  const lines = [];
+  const groupon = report?.groupon || [];
+  const hasGroupon = groupon.some(
+    (g) =>
+      toNumber(g.verifyCount) ||
+      toNumber(g.verifyAmount) ||
+      toNumber(g.refundCount) ||
+      toNumber(g.refundAmount),
+  );
+  if (hasGroupon && !toNumber(metrics.settledAmount) && toNumber(metrics.grouponNet) > 0) {
+    lines.push(
+      `团购核销净额 ¥${round2(metrics.grouponNet).toFixed(2)} 尚未结算到账；若当天银行入账已包含美团/抖音打款，请在团购表填「结算到账金额」，否则这笔钱会被计入实收造成“多收”。`,
+    );
+  }
+  if (toNumber(report?.reconciliation?.cashDeposit) > 0) {
+    lines.push(
+      `已剔除现金存入 ¥${round2(report.reconciliation.cashDeposit).toFixed(2)}；如银行入账里没有这笔存入，请把「现金存入」改为 0。`,
+    );
+  }
+  const tolerance = toNumber(settings?.reconcileTolerance) || 3;
+  if (toNumber(metrics.reconcileCount) >= 2) {
+    const total = round2(metrics.reconcileTotal);
+    if (Math.abs(total) <= tolerance) {
+      lines.push(
+        `累计差额 ¥${total.toFixed(2)}，在容差内：每日差额多为到账时间差（今天到账的可能是前几天的款），拉长看基本能对上。`,
+      );
+    } else {
+      lines.push(
+        `累计差额 ¥${total.toFixed(2)} 持续超出容差：不是单纯到账时间差，请核对银行流水（是否混入非营业入账/团购结算）和现金盘点（备用金、找零、漏记）。`,
+      );
+    }
+  }
+  return lines;
 }
 
 export function averageTicket(report) {
@@ -166,9 +215,10 @@ export function reportMetrics(report, reports, settings) {
       acc.newCustomerCount += toNumber(g.newCustomerCount);
       acc.refundCount += toNumber(g.refundCount);
       acc.refundAmount += toNumber(g.refundAmount);
+      acc.settledAmount += toNumber(g.settledAmount);
       return acc;
     },
-    { verifyCount: 0, verifyAmount: 0, newCustomerCount: 0, refundCount: 0, refundAmount: 0 }
+    { verifyCount: 0, verifyAmount: 0, newCustomerCount: 0, refundCount: 0, refundAmount: 0, settledAmount: 0 }
   );
 
   const abnormal = report.abnormal.reduce(
@@ -198,6 +248,27 @@ export function reportMetrics(report, reports, settings) {
       ]
     : [{ key: "quick", label: "快速营收", value: total }];
   const grouponNet = round2(groupon.verifyAmount - groupon.refundAmount);
+  const settledAmount = round2(groupon.settledAmount);
+  const pendingToday = round2(grouponNet - settledAmount);
+  // 累计待收：同周期类型所有报表（含当前未保存报表）的核销净额 − 已结算到账
+  const periodKey = report.periodType || "day";
+  let pendingReports = reports.filter((r) => (r.periodType || "day") === periodKey);
+  if (!pendingReports.some((r) => r.date === report.date)) {
+    pendingReports = [...pendingReports, report];
+  }
+  const pendingTotal = round2(
+    pendingReports.reduce((sum, r) => {
+      const net = (r.groupon || []).reduce(
+        (s, g) => s + toNumber(g.verifyAmount) - toNumber(g.refundAmount),
+        0,
+      );
+      const settled = (r.groupon || []).reduce((s, g) => s + toNumber(g.settledAmount), 0);
+      return sum + net - settled;
+    }, 0),
+  );
+  const reconcileTotal = round2(
+    pendingReports.reduce((sum, r) => sum + reconcileMetrics(r, settings).diff, 0),
+  );
   if (breakdownTotal > 0 && grouponNet > 0) {
     shareItems.push({ key: "groupon", label: "团购核销", value: grouponNet });
   }
@@ -218,6 +289,12 @@ export function reportMetrics(report, reports, settings) {
     grossRate,
     memberRate,
     groupon,
+    grouponNet,
+    settledAmount,
+    pendingToday,
+    pendingTotal,
+    reconcileTotal,
+    reconcileCount: pendingReports.length,
     abnormal,
     diff,
     systemRevenue,

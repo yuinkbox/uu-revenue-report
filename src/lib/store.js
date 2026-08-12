@@ -56,9 +56,19 @@ export function migrateReport(report) {
       ...(report.member || {}),
       giftCardConsume: (toNumber(report.member?.giftCardConsume) + toNumber(report.member?.tableCardConsume)) || 0,
       tableCardConsume: 0,
+      tableCardRecharge: report.member?.tableCardRecharge ?? 0,
       newMemberRecharge: report.member?.newMemberRecharge ?? 0,
       existingMemberRecharge: report.member?.existingMemberRecharge ?? 0
     },
+    groupon: (report.groupon || []).map((g) => ({
+      platform: g.platform,
+      verifyCount: g.verifyCount ?? 0,
+      verifyAmount: g.verifyAmount ?? 0,
+      newCustomerCount: g.newCustomerCount ?? 0,
+      refundCount: g.refundCount ?? 0,
+      refundAmount: g.refundAmount ?? 0,
+      settledAmount: g.settledAmount ?? 0
+    })),
     reconciliation: {
       systemRevenue: oldRecon.systemRevenue ?? null,
       actualRevenue: oldRecon.actualRevenue ?? null,
@@ -137,6 +147,7 @@ export function emptyReport(date, settings) {
     member: {
       newMembers: 0,
       rechargeAmount: 0,
+      tableCardRecharge: 0,
       rechargeGiftAmount: 0,
       consumeAmount: 0,
       tableCardConsume: 0,
@@ -144,7 +155,17 @@ export function emptyReport(date, settings) {
       newMemberRecharge: 0,
       existingMemberRecharge: 0
     },
-    groupon: [{ platform: "抖音", verifyCount: 0, verifyAmount: 0, newCustomerCount: 0, refundCount: 0, refundAmount: 0 }],
+    groupon: [
+      {
+        platform: "抖音",
+        verifyCount: 0,
+        verifyAmount: 0,
+        newCustomerCount: 0,
+        refundCount: 0,
+        refundAmount: 0,
+        settledAmount: 0
+      }
+    ],
     abnormal: [{ type: "清台销单", count: 0, amount: 0, operator: "", remark: "" }],
     reconciliation: {
       systemRevenue: null,

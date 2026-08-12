@@ -22,7 +22,16 @@ import { Field, NumberInput, SelectInput, TextInput } from "@/components/fields"
 import { MetricCard } from "@/components/metric-card";
 import PageHeader from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
-import { averageTicket, directRevenue, productSummary, reconcileMetrics, reportMetrics, round2, toNumber } from "@/lib/calc";
+import {
+  averageTicket,
+  directRevenue,
+  productSummary,
+  reconcileDiagnostics,
+  reconcileMetrics,
+  reportMetrics,
+  round2,
+  toNumber,
+} from "@/lib/calc";
 import { applyImportPatch, importTaikeduoExcel, mergeMember, summarizeWeeklyFiles } from "@/lib/importers";
 import { money, signedMoney, signedRate } from "@/lib/format";
 import { PERIOD_TYPES, periodRange } from "@/lib/period";
@@ -59,6 +68,7 @@ export default function DataEntry({
   const isDay = periodType === "day";
   const metrics = reportMetrics(report, reports, settings);
   const rm = reconcileMetrics(report, settings);
+  const diagnosticLines = reconcileDiagnostics(report, metrics, settings);
   const ticket = averageTicket(report);
 
   const target = isDay || periodType === "week" ? settings.monthTarget : report.periodTarget;
@@ -157,6 +167,7 @@ export default function DataEntry({
             member: {
               ...report.member,
               rechargeAmount: res.member.rechargeAmount,
+              tableCardRecharge: res.member.tableCardRecharge,
               rechargeGiftAmount: res.member.rechargeGiftAmount,
               consumeAmount: res.member.consumeAmount,
               tableCardConsume: res.member.tableCardConsume,
@@ -166,8 +177,24 @@ export default function DataEntry({
             productQty: res.productTotals.qty,
             productCost: res.productTotals.cost,
             groupon: [
-              { platform: "美团", verifyCount: res.groupon["美团"].verifyCount, verifyAmount: res.groupon["美团"].verifyAmount, newCustomerCount: 0 },
-              { platform: "抖音", verifyCount: res.groupon["抖音"].verifyCount, verifyAmount: res.groupon["抖音"].verifyAmount, newCustomerCount: 0 },
+              {
+                platform: "美团",
+                verifyCount: res.groupon["美团"].verifyCount,
+                verifyAmount: res.groupon["美团"].verifyAmount,
+                newCustomerCount: 0,
+                refundCount: 0,
+                refundAmount: 0,
+                settledAmount: 0
+              },
+              {
+                platform: "抖音",
+                verifyCount: res.groupon["抖音"].verifyCount,
+                verifyAmount: res.groupon["抖音"].verifyAmount,
+                newCustomerCount: 0,
+                refundCount: 0,
+                refundAmount: 0,
+                settledAmount: 0
+              },
             ],
           };
           onChange(applyImportPatch(report, patch) as Report);
@@ -256,7 +283,7 @@ export default function DataEntry({
           hint={
             report.customerCount
               ? `客单总数 ${report.customerCount}（总营收 ÷ 客单总数）`
-              : "导入经营报表后自动带入客单总数并计算"
+              : "填「客单总数」或导入经营报表后自动计算"
           }
           icon={<TrendingUp className="size-4" />}
         />
@@ -335,6 +362,9 @@ export default function DataEntry({
             <Field label="助教费收入">
               <NumberInput value={report.revenue.coach} onChange={(v) => setNested("revenue", { coach: v })} />
             </Field>
+            <Field label="客单总数" hint="客单价 = 总营收 ÷ 客单总数，导入经营报表也会自动带入">
+              <NumberInput value={report.customerCount ?? ""} step="1" onChange={(v) => set({ customerCount: v })} />
+            </Field>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="快速填总金额" hint="有分项时以分项合计为准">
@@ -373,7 +403,11 @@ export default function DataEntry({
           </div>
         </SectionCard>
 
-        <SectionCard title="团购" subtitle="从美团/抖音后台查询后手填，核销与退款分开" icon={<Users className="size-4" />}>
+        <SectionCard
+          title="团购"
+          subtitle="核销/退款从美团、抖音后台查询；结算到账金额填当天平台打进农商卡的钱（不计入现场实收）"
+          icon={<Users className="size-4" />}
+        >
           <div className="overflow-x-auto rounded-md border">
             <Table>
               <TableHeader>
@@ -383,6 +417,7 @@ export default function DataEntry({
                   <TableHead className="min-w-[100px]">核销金额</TableHead>
                   <TableHead className="min-w-[90px]">退款券数</TableHead>
                   <TableHead className="min-w-[100px]">退款金额</TableHead>
+                  <TableHead className="min-w-[110px]">结算到账金额</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -400,6 +435,9 @@ export default function DataEntry({
                     </TableCell>
                     <TableCell className="p-1.5">
                       <NumberInput value={g.refundAmount ?? 0} onChange={(v) => updateGrouponRow(g.platform, { refundAmount: v })} />
+                    </TableCell>
+                    <TableCell className="p-1.5">
+                      <NumberInput value={g.settledAmount ?? 0} onChange={(v) => updateGrouponRow(g.platform, { settledAmount: v })} />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -424,6 +462,9 @@ export default function DataEntry({
             <Field label="充值赠送金额" hint="赠送的是台桌费，记入礼金卡">
               <NumberInput value={report.member.rechargeGiftAmount} onChange={(v) => setNested("member", { rechargeGiftAmount: v })} />
             </Field>
+            <Field label="台费卡充值" hint="商云宝报表「台费卡充值」，通常为 0">
+              <NumberInput value={report.member.tableCardRecharge ?? 0} onChange={(v) => setNested("member", { tableCardRecharge: v })} />
+            </Field>
             <Field label="新增会员数">
               <NumberInput value={report.member.newMembers} step="1" onChange={(v) => setNested("member", { newMembers: v })} />
             </Field>
@@ -438,17 +479,17 @@ export default function DataEntry({
 
         <SectionCard
           title="现金与银行对账"
-          subtitle="总营收按经营收入口径；现场实收与应到账用于核对商云宝"
+          subtitle="实收 = 现金 + 农商卡入账 − 现金存入 − 团购结算到账；应到账 = 营业额 + 充值 − 储值卡消费 − 台费卡消费"
           icon={<Banknote className="size-4" />}
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label="当日/期间现金收款">
+            <Field label="当日/期间现金收款" hint="当日收银现金总数（含已存入银行的现金）">
               <NumberInput value={report.cashReceived ?? 0} onChange={(v) => set({ cashReceived: v })} />
             </Field>
-            <Field label="农商卡到账">
+            <Field label="农商卡到账" hint="当日银行入账总额（含现金存入、团购平台结算）">
               <NumberInput value={report.reconciliation.bankReceived ?? 0} onChange={(v) => setNested("reconciliation", { bankReceived: v })} />
             </Field>
-            <Field label="现金存入（如有）">
+            <Field label="现金存入（如有）" hint="其中由现金存入银行的部分，避免重复计算">
               <NumberInput value={report.reconciliation.cashDeposit ?? 0} onChange={(v) => setNested("reconciliation", { cashDeposit: v })} />
             </Field>
           </div>
@@ -463,19 +504,56 @@ export default function DataEntry({
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">商云宝营业额（参考）</td>
                   <td className="nums px-3 py-2 text-right">{money(direct)}</td>
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">台桌+商品+教练</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">台桌+商品+教练+其他</td>
                 </tr>
                 <tr className="border-b">
-                  <td className="px-3 py-2 font-medium">储值充值（预收款·不计入营收）</td>
-                  <td className="nums px-3 py-2 text-right">{money(report.member.rechargeAmount)}</td>
+                  <td className="px-3 py-2 font-medium">储值卡充值（预收款）</td>
+                  <td className="nums px-3 py-2 text-right">{money(rechargeDisplay)}</td>
                   <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">新会员+老会员充值</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">台费卡充值（预收款）</td>
+                  <td className="nums px-3 py-2 text-right">{money(report.member.tableCardRecharge ?? 0)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">商云宝报表「台费卡充值」</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">储值卡消费</td>
+                  <td className="nums px-3 py-2 text-right">{money(report.member.consumeAmount)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">卡余额支付，不产生现金</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">台费卡/礼金卡消费</td>
+                  <td className="nums px-3 py-2 text-right">{money(report.member.giftCardConsume ?? 0)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">卡余额支付，不产生现金</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">应到账（合计）</td>
+                  <td className="nums px-3 py-2 text-right font-medium">{money(rm.expectedRevenue)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">营业额+充值−储值卡消费−台费卡消费</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">团购核销净额（未到账）</td>
+                  <td className="nums px-3 py-2 text-right">{money(metrics.grouponNet)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">美团/抖音核销−退款，平台后结算</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">团购结算到账（已剔除）</td>
+                  <td className="nums px-3 py-2 text-right">{money(metrics.settledAmount)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">平台当天打款，不计入现场实收</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">团购待收（累计）</td>
+                  <td className="nums px-3 py-2 text-right">{money(metrics.pendingTotal)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">累计核销净额−累计结算到账</td>
                 </tr>
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">现场实收 / 应到账</td>
                   <td className="nums px-3 py-2 text-right">
                     {money(rm.actualReceived)} / {money(rm.expectedRevenue)}
                   </td>
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">应到账按商云宝推算</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">
+                    实收=现金+农商−现金存入−团购结算
+                  </td>
                 </tr>
                 <tr className={rm.diff > 0 ? "bg-red-50" : rm.diff < 0 ? "bg-emerald-50" : ""}>
                   <td className="px-3 py-2 font-medium">差异</td>
@@ -491,9 +569,25 @@ export default function DataEntry({
                     {rm.tier === "normal" ? "正常（容差内）" : rm.tier === "explained" ? "已解释" : "待查"}
                   </td>
                 </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">累计差额（同周期全部日报）</td>
+                  <td className="nums px-3 py-2 text-right">{signedMoney(metrics.reconcileTotal)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">
+                    累计实收−应到账；接近 0 = 多为到账时间差
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
+          {diagnosticLines.length ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+              {diagnosticLines.map((line) => (
+                <p key={line} className="leading-relaxed">
+                  {line}
+                </p>
+              ))}
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="差异原因" hint="从固定原因中选择">
               <SelectInput

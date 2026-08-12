@@ -278,4 +278,36 @@ const mm = mergeMember(
 );
 assert(mm.consumeAmount === 22 && mm.giftCardConsume === 112 && mm.newMembers === 2, "会员明细合并按字段求和");
 
+// 财务对账报表（8/11 真实表头）：识别为综合报表，拆分储值/台费充值并做口径自检
+const reconReport = fakeFile("2026年8月11日财务对账报表.xlsx", [
+  ["日期", "台桌营业额", "商品营业额", "教练营业额", "礼物营业额", "充电宝营业额", "总营业额", "客单总数", "客单价", "线上收款金额", "线下收款金额", "总流水", "储值卡充值", "台费卡充值", "储值卡消费", "台费卡消费"],
+  ["2026-08-11", 453.31, 800.76, 1276.31, 0, 0, 2530.38, 90, 28.12, 0, 4474.8, 4474.8, 3000, 0, 983.55, 72.03]
+]);
+const reconRes = await importTaikeduoExcel(reconReport, "2026-08-11");
+assert(reconRes.ok && reconRes.template === "comprehensive", "财务对账报表识别为综合报表");
+assert(reconRes.patch.member.rechargeAmount === 3000 && reconRes.patch.member.tableCardRecharge === 0, "储值/台费充值拆分正确");
+assert(reconRes.patch.member.consumeAmount === 983.55 && reconRes.patch.member.giftCardConsume === 72.03, "储值/台费卡消费读取正确");
+assert(reconRes.patch.reconciliation.systemRevenue === 4474.8, "总流水作为商云宝应到账参考");
+assert(!reconRes.message.includes("口径自检"), "流水与推导一致时不提示异常");
+
+const reconBad = fakeFile("对账口径异常.xlsx", [
+  ["日期", "台桌营业额", "商品营业额", "教练营业额", "礼物营业额", "充电宝营业额", "总营业额", "客单总数", "客单价", "线上收款金额", "线下收款金额", "总流水", "储值卡充值", "台费卡充值", "储值卡消费", "台费卡消费"],
+  ["2026-08-11", 453.31, 800.76, 1276.31, 0, 0, 2530.38, 90, 28.12, 0, 4474.8, 5000, 3000, 0, 983.55, 72.03]
+]);
+const reconBadRes = await importTaikeduoExcel(reconBad, "2026-08-11");
+assert(reconBadRes.message.includes("口径自检"), "流水与推导不符时提示口径异常");
+
+// 会员卡变动：台费卡充值单独拆分
+const cardChange = fakeFile("会员卡变动明细.xlsx", [
+  ["变动时间", "变动类型", "会员卡类型", "变动金额"],
+  ["2026-08-11 10:00", "充值", "储值卡", 1000],
+  ["2026-08-11 11:00", "充值", "台费卡", 200],
+  ["2026-08-11 12:00", "消费", "储值卡", 100]
+]);
+const ccRes = await importTaikeduoExcel(cardChange, "2026-08-11");
+assert(
+  ccRes.patch.member.rechargeAmount === 1000 && ccRes.patch.member.tableCardRecharge === 200,
+  "会员卡变动拆分台费卡充值"
+);
+
 console.log(process.exitCode ? "有测试失败" : "全部通过");

@@ -136,6 +136,13 @@ function detectTemplate(headers) {
   }
   if (
     headers.includes("总营业额") &&
+    headers.includes("总流水") &&
+    (headers.includes("储值卡充值") || headers.includes("储值卡消费") || headers.includes("台费卡消费"))
+  ) {
+    return "comprehensive";
+  }
+  if (
+    headers.includes("总营业额") &&
     headers.includes("客单总数") &&
     (headers.includes("台桌营业额") || headers.includes("商品营业额"))
   ) {
@@ -235,11 +242,12 @@ function inRange(dateStr, startDate, endDate) {
 export async function summarizeWeeklyFiles(files, startDate, endDate) {
   const days = new Map();
   const groupon = {
-    美团: { verifyCount: 0, verifyAmount: 0, refundCount: 0, refundAmount: 0 },
-    抖音: { verifyCount: 0, verifyAmount: 0, refundCount: 0, refundAmount: 0 }
+    美团: { verifyCount: 0, verifyAmount: 0, refundCount: 0, refundAmount: 0, settledAmount: 0 },
+    抖音: { verifyCount: 0, verifyAmount: 0, refundCount: 0, refundAmount: 0, settledAmount: 0 }
   };
   const member = {
     rechargeAmount: 0,
+    tableCardRecharge: 0,
     rechargeGiftAmount: 0,
     consumeAmount: 0,
     tableCardConsume: 0,
@@ -310,6 +318,7 @@ export async function summarizeWeeklyFiles(files, startDate, endDate) {
       };
       const agg = memberFromChangeRows(rows, startDate, endDate, kindMap[template]);
       member.rechargeAmount = round2(member.rechargeAmount + agg.rechargeAmount);
+      member.tableCardRecharge = round2(member.tableCardRecharge + agg.tableCardRecharge);
       member.rechargeGiftAmount = round2(member.rechargeGiftAmount + agg.rechargeGiftAmount);
       member.consumeAmount = round2(member.consumeAmount + agg.consumeAmount);
       member.tableCardConsume = round2(member.tableCardConsume + agg.tableCardConsume);
@@ -578,7 +587,8 @@ function importComprehensive(rows, targetDate, options) {
   const online = numberValue(row, ["线上收款金额"]);
   const offline = numberValue(row, ["线下收款金额"]);
   const flow = firstValue(row, ["总流水"]);
-  const recharge = numberValue(row, ["储值卡充值"]) + numberValue(row, ["台费卡充值"]);
+  const rechargeAmount = numberValue(row, ["储值卡充值"]);
+  const tableCardRecharge = numberValue(row, ["台费卡充值"]);
   const rechargeGift = numberValue(row, ["台费卡充值赠送金额"]);
   const consume = numberValue(row, ["储值卡消费"]);
   const giftCardConsume = numberValue(row, ["台费卡消费"]);
@@ -597,21 +607,35 @@ function importComprehensive(rows, targetDate, options) {
       peakHours: ""
     },
     member: {
-      rechargeAmount: recharge,
+      rechargeAmount,
+      tableCardRecharge,
       rechargeGiftAmount: rechargeGift,
       consumeAmount: consume,
       giftCardConsume
     },
     reconciliation: {
-      systemRevenue: flow !== undefined && flow !== "" ? toNumber(String(flow).replace(/,/g, "")) : totalRevenue,
+      systemRevenue:
+        flow !== undefined && flow !== ""
+          ? toNumber(String(flow).replace(/,/g, ""))
+          : totalRevenue,
       actualRevenue: round2(online + offline) || ""
     }
   };
 
+  let message = `综合报表：总营收 ¥${totalRevenue}、开台 ${openCount} 次`;
+  const flowValue =
+    flow !== undefined && flow !== "" ? toNumber(String(flow).replace(/,/g, "")) : null;
+  const derivedFlow = round2(
+    totalRevenue + rechargeAmount + tableCardRecharge - consume - giftCardConsume,
+  );
+  if (flowValue !== null && Math.abs(flowValue - derivedFlow) > 0.02) {
+    message += `；口径自检：总流水 ¥${flowValue} ≠ 营业额+充值−卡消费 ¥${derivedFlow}（差 ¥${round2(flowValue - derivedFlow)}），请核对商云宝报表`;
+  }
+
   return {
     ok: true,
     template: "comprehensive",
-    message: `综合报表：总营收 ¥${totalRevenue}、开台 ${openCount} 次`,
+    message,
     patch,
     summary: { 总营收: totalRevenue, 台桌: tableRevenue, 商品: productRevenue, 教练: coachRevenue, 开台: openCount }
   };
@@ -744,7 +768,13 @@ function importGroupon(rows, targetDate, options) {
     const amount = options.grouponAmountSource === "summary" ? 0 : settled ? settled : numberValue(row, ["售价"]);
     const statusText = statusKey ? String(row[statusKey] ?? "").trim() : "";
     const isRefund = (statusText && !/核销|成功|完成/.test(statusText)) || amount < 0;
-    byPlatform[platform] = byPlatform[platform] || { verifyCount: 0, verifyAmount: 0, refundCount: 0, refundAmount: 0 };
+    byPlatform[platform] = byPlatform[platform] || {
+      verifyCount: 0,
+      verifyAmount: 0,
+      refundCount: 0,
+      refundAmount: 0,
+      settledAmount: 0
+    };
     if (isRefund) {
       byPlatform[platform].refundCount += 1;
       byPlatform[platform].refundAmount = round2(byPlatform[platform].refundAmount + Math.abs(amount));
@@ -770,7 +800,8 @@ function importGroupon(rows, targetDate, options) {
     verifyAmount: item.verifyAmount,
     newCustomerCount: 0,
     refundCount: item.refundCount,
-    refundAmount: item.refundAmount
+    refundAmount: item.refundAmount,
+    settledAmount: 0
   }));
   return {
     ok: true,
@@ -796,6 +827,7 @@ function memberFromChangeRows(rows, startDate, endDate, kind) {
   };
   const agg = {
     rechargeAmount: 0,
+    tableCardRecharge: 0,
     rechargeGiftAmount: 0,
     consumeAmount: 0,
     tableCardConsume: 0,
@@ -830,7 +862,11 @@ function memberFromChangeRows(rows, startDate, endDate, kind) {
     }
     // memberCard
     if (/充值/.test(type)) {
-      agg.rechargeAmount = round2(agg.rechargeAmount + amount);
+      if (/台费|礼金/.test(card)) {
+        agg.tableCardRecharge = round2(agg.tableCardRecharge + amount);
+      } else {
+        agg.rechargeAmount = round2(agg.rechargeAmount + amount);
+      }
     } else if (/消费/.test(type)) {
       if (/储值/.test(card)) agg.consumeAmount = round2(agg.consumeAmount + amount);
       else agg.giftCardConsume = round2(agg.giftCardConsume + amount);
@@ -849,7 +885,7 @@ function importMemberCardChange(rows, targetDate) {
   return {
     ok: true,
     template: "memberCardChange",
-    message: `会员卡变动：充值 ¥${round2(agg.rechargeAmount)}、消费 ¥${round2(agg.consumeAmount + agg.giftCardConsume)}、新增会员 ${agg.newMembers}`,
+    message: `会员卡变动：充值 ¥${round2(agg.rechargeAmount + agg.tableCardRecharge)}、消费 ¥${round2(agg.consumeAmount + agg.giftCardConsume)}、新增会员 ${agg.newMembers}`,
     patch: { member: { ...agg } },
     summary: agg
   };
@@ -882,6 +918,7 @@ export function mergeMember(a, b) {
   const out = { ...(a || {}), ...(b || {}) };
   for (const key of [
     "rechargeAmount",
+    "tableCardRecharge",
     "rechargeGiftAmount",
     "consumeAmount",
     "tableCardConsume",
@@ -906,17 +943,25 @@ export function mergeImportPatch(report, patch) {
           platform: g.platform,
           verifyCount: 0,
           verifyAmount: 0,
-          newCustomerCount: 0
+          newCustomerCount: 0,
+          settledAmount: 0
         };
         cur.verifyCount = round2(toNumber(cur.verifyCount) + toNumber(g.verifyCount));
         if (!toNumber(cur.verifyAmount) && toNumber(g.verifyAmount)) {
           cur.verifyAmount = round2(g.verifyAmount);
         }
+        if (!toNumber(cur.settledAmount) && toNumber(g.settledAmount)) {
+          cur.settledAmount = round2(g.settledAmount);
+        }
         cur.newCustomerCount = round2(toNumber(cur.newCustomerCount) + toNumber(g.newCustomerCount));
         byPlatform.set(g.platform, cur);
       }
       next.groupon = Array.from(byPlatform.values()).filter(
-        (g) => toNumber(g.verifyCount) || toNumber(g.verifyAmount) || toNumber(g.newCustomerCount)
+        (g) =>
+          toNumber(g.verifyCount) ||
+          toNumber(g.verifyAmount) ||
+          toNumber(g.newCustomerCount) ||
+          toNumber(g.settledAmount)
       );
       continue;
     }

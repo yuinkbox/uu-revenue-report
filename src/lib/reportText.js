@@ -69,6 +69,7 @@ export function buildWeChatText(report, metrics, settings, version = "shareholde
     `新增会员 ${report.member.newMembers || 0} 人 ｜ 充值 ¥${money(rechargeShow)}（新会员 ¥${money(rechargeNew)} / 老会员 ¥${money(rechargeOld)}）`
   );
   parts.push(`充值赠送（礼金卡）¥${money(report.member.rechargeGiftAmount)}`);
+  parts.push(`台费卡充值 ¥${money(report.member.tableCardRecharge)}`);
   parts.push(`会员消费占比 ${metrics.memberRate.toFixed(1)}%`);
   parts.push(
     `储值卡消费 ¥${money(report.member.consumeAmount)} ｜ 礼金卡消费 ¥${money(report.member.giftCardConsume)}`
@@ -79,6 +80,9 @@ export function buildWeChatText(report, metrics, settings, version = "shareholde
     `核销 ${metrics.groupon.verifyCount} 单 / ¥${money(metrics.groupon.verifyAmount)}` +
       (metrics.groupon.refundCount > 0
         ? ` ｜ 退款 ${metrics.groupon.refundCount} 单 / ¥${money(metrics.groupon.refundAmount)}`
+        : "") +
+      (toNumber(metrics.settledAmount) || toNumber(metrics.pendingTotal)
+        ? ` ｜ 结算到账 ¥${money(metrics.settledAmount)} ｜ 待收 ¥${money(metrics.pendingTotal)}`
         : "")
   );
   parts.push("");
@@ -95,8 +99,9 @@ export function buildWeChatText(report, metrics, settings, version = "shareholde
     parts.push("【对账结论】");
     parts.push(`总营收（经营收入）¥${money(metrics.total)}（商云宝营业额+团购核销净额）｜ 储值充值 ¥${money(report.member.rechargeAmount)}（预收款）`);
     parts.push(
-      `现场实收 ¥${money(rm.actualReceived)} ｜ 应到账 ¥${money(rm.expectedRevenue)} ｜ 差异 ${signedMoney(rm.diff)}（${rm.tier === "normal" ? "正常" : rm.tier === "explained" ? "已解释" : "待查"}）`
+      `现场实收 ¥${money(rm.actualReceived)} ｜ 应到账 ¥${money(rm.expectedRevenue)}（营业额+充值−储值卡消费−台费卡消费）｜ 差异 ${signedMoney(rm.diff)}（${rm.tier === "normal" ? "正常" : rm.tier === "explained" ? "已解释" : "待查"}）`
     );
+    parts.push(`累计差额（同周期 ${metrics.reconcileCount} 份日报）¥${money(metrics.reconcileTotal)}`);
     if (report.reconciliation?.diffReason) {
       const note = report.reconciliation.diffNote ? `（${report.reconciliation.diffNote}）` : "";
       parts.push(`差异原因：${report.reconciliation.diffReason}${note}`);

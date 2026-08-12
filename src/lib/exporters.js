@@ -87,6 +87,7 @@ function reportRows(report, metrics, settings, version = "shareholder") {
     ),
   ]);
   rows.push(["充值赠送（礼金卡）", money(report.member.rechargeGiftAmount)]);
+  rows.push(["台费卡充值", money(report.member.tableCardRecharge ?? 0)]);
   rows.push(["会员消费占比", rate(metrics.memberRate)]);
   rows.push(["储值卡消费", money(report.member.consumeAmount)]);
   rows.push(["礼金卡消费", money(report.member.giftCardConsume)]);
@@ -97,6 +98,8 @@ function reportRows(report, metrics, settings, version = "shareholder") {
         ? `（退款 ${metrics.groupon.refundCount} 单 / ${money(metrics.groupon.refundAmount)}）`
         : ""),
   ]);
+  rows.push(["团购结算到账（不计入实收）", money(metrics.settledAmount)]);
+  rows.push(["团购待收（累计）", money(metrics.pendingTotal)]);
   rows.push(["商品销售金额", money(metrics.productTotal.saleAmount)]);
   rows.push(["商品销售成本", money(metrics.productTotal.saleCost)]);
   rows.push(["商品毛利", money(metrics.grossProfit)]);
@@ -107,9 +110,10 @@ function reportRows(report, metrics, settings, version = "shareholder") {
   if (version !== "staff") {
     const rm = reconcileMetrics(report, settings);
     rows.push(["商云宝营业额（参考）", money(directRevenue(report))]);
-    rows.push(["应到账", money(rm.expectedRevenue)]);
-    rows.push(["实际到账", money(rm.actualReceived)]);
+    rows.push(["应到账（营业额+充值−储值卡消费−台费卡消费）", money(rm.expectedRevenue)]);
+    rows.push(["现场实收（现金+农商−现金存入−团购结算）", money(rm.actualReceived)]);
     rows.push(["对账差异", signedMoney(rm.diff)]);
+    rows.push(["累计差额（同周期全部日报）", signedMoney(metrics.reconcileTotal)]);
     rows.push(["差异状态", rm.tier === "normal" ? "正常（容差内）" : rm.tier === "explained" ? "已解释" : "待查"]);
     if (report.reconciliation?.diffReason) {
       const note = report.reconciliation.diffNote ? `（${report.reconciliation.diffNote}）` : "";

@@ -22,6 +22,7 @@ export interface ReportGroupon {
   newCustomerCount: Num;
   refundCount?: Num;
   refundAmount?: Num;
+  settledAmount?: Num;
 }
 
 export interface ReportAbnormal {
@@ -65,6 +66,7 @@ export interface Report {
   member: {
     newMembers: Num;
     rechargeAmount: Num;
+    tableCardRecharge?: Num;
     rechargeGiftAmount: Num;
     consumeAmount: Num;
     tableCardConsume?: Num;

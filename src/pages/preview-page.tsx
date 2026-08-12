@@ -246,6 +246,7 @@ export default function PreviewPage({
                 )}
               />
               <DlRow label="充值赠送（礼金卡）" value={money(report.member.rechargeGiftAmount)} />
+              <DlRow label="台费卡充值" value={money(report.member.tableCardRecharge ?? 0)} />
               <DlRow label="储值卡消费" value={money(report.member.consumeAmount)} />
               <DlRow label="礼金卡消费" value={money(report.member.giftCardConsume)} />
             </dl>
@@ -268,9 +269,17 @@ export default function PreviewPage({
                       {toNumber(g.refundCount) || toNumber(g.refundAmount)
                         ? ` ｜ 退款 ${toNumber(g.refundCount)} 单 / ${money(g.refundAmount)}`
                         : ""}
+                      {toNumber(g.settledAmount)
+                        ? ` ｜ 结算到账 ${money(g.settledAmount)}`
+                        : ""}
                     </span>
                   </div>
                 ))}
+              {hasGroupon ? (
+                <p className="pt-1 text-[12px] text-muted-foreground">
+                  核销净额 {money(metrics.grouponNet)}（未到账）｜ 累计待收 {money(metrics.pendingTotal)}
+                </p>
+              ) : null}
             </div>
           ) : (
             <p className="text-[13px] text-muted-foreground">本期无团购数据</p>
@@ -312,16 +321,61 @@ export default function PreviewPage({
                   <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">台桌+商品+教练</td>
                 </tr>
                 <tr className="border-b">
-                  <td className="px-3 py-2 font-medium">储值充值（预收款·不计入营收）</td>
-                  <td className="nums px-3 py-2 text-right">{money(report.member.rechargeAmount)}</td>
+                  <td className="px-3 py-2 font-medium">储值卡充值（预收款）</td>
+                  <td className="nums px-3 py-2 text-right">
+                    {money(
+                      toNumber(report.member.newMemberRecharge) + toNumber(report.member.existingMemberRecharge) > 0
+                        ? toNumber(report.member.newMemberRecharge) + toNumber(report.member.existingMemberRecharge)
+                        : report.member.rechargeAmount,
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">新会员+老会员充值</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">台费卡充值（预收款）</td>
+                  <td className="nums px-3 py-2 text-right">{money(report.member.tableCardRecharge ?? 0)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">商云宝报表「台费卡充值」</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">储值卡消费</td>
+                  <td className="nums px-3 py-2 text-right">{money(report.member.consumeAmount)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">卡余额支付，不产生现金</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">台费卡/礼金卡消费</td>
+                  <td className="nums px-3 py-2 text-right">{money(report.member.giftCardConsume ?? 0)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">卡余额支付，不产生现金</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">应到账（合计）</td>
+                  <td className="nums px-3 py-2 text-right font-medium">{money(rm.expectedRevenue)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">
+                    营业额+充值−储值卡消费−台费卡消费
+                  </td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">团购核销净额（未到账）</td>
+                  <td className="nums px-3 py-2 text-right">{money(metrics.grouponNet)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">美团/抖音核销−退款</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">团购结算到账（已剔除）</td>
+                  <td className="nums px-3 py-2 text-right">{money(metrics.settledAmount)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">平台当天打款，不计入实收</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">团购待收（累计）</td>
+                  <td className="nums px-3 py-2 text-right">{money(metrics.pendingTotal)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">累计核销净额−累计结算到账</td>
                 </tr>
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">现场实收 / 应到账</td>
                   <td className="nums px-3 py-2 text-right">
                     {money(rm.actualReceived)} / {money(rm.expectedRevenue)}
                   </td>
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">应到账按商云宝推算</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">
+                    实收=现金+农商−现金存入−团购结算
+                  </td>
                 </tr>
                 <tr className={rm.diff > 0 ? "bg-red-50" : rm.diff < 0 ? "bg-emerald-50" : ""}>
                   <td className="px-3 py-2 font-medium">差异</td>
@@ -339,6 +393,13 @@ export default function PreviewPage({
                       ? ` ｜ ${report.reconciliation.diffReason}${report.reconciliation.diffNote ? `（${report.reconciliation.diffNote}）` : ""}`
                       : ""}
                     {report.reconciliation.systemError ? ` ｜ ${report.reconciliation.systemError}` : ""}
+                  </td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-3 py-2 font-medium">累计差额（同周期全部日报）</td>
+                  <td className="nums px-3 py-2 text-right">{signedMoney(metrics.reconcileTotal)}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">
+                    累计实收−应到账；接近 0 = 多为到账时间差
                   </td>
                 </tr>
               </tbody>
