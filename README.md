@@ -37,21 +37,45 @@
 
 ### 第 3 步：服务器一次性初始化
 
-服务器需要装好 [Node.js](https://nodejs.org)（18+）和 [git](https://git-scm.com)，然后把 `deploy_key.pub` 拷到服务器，右键 PowerShell「以管理员身份运行」：
+#### 方式 A：Linux 服务器（含 OpenClaw 托管的 VPS，推荐）
+
+服务器需要 git 与 Node.js 18+（OpenClaw 自带 Node）。把 `deploy_key.pub` 内容发到服务器（或直接让 OpenClaw 执行），然后以 root 运行：
+
+```bash
+sudo bash /opt/uu-report/deploy/设置服务器.sh /tmp/deploy_key.pub
+```
+
+脚本会自动：建 `deploy` 账号并写公钥 → 拉代码装依赖构建 → 注册 systemd 开机自启服务 `uu-report` → 授权免密重启 → 放行应用端口。
+
+> 如果你是让 OpenClaw 来执行，直接把下面这段话发给它即可：
+>
+> ```text
+> 请在我的服务器上以 root 执行以下命令，完成 GitHub Actions 自动部署初始化：
+> echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPgOH96L4o/and8Kcgr69DiokxE1J/8DDD/ZBDTFgzqB uu-report-github-actions" > /tmp/deploy_key.pub
+> curl -fsSL https://raw.githubusercontent.com/yuinkbox/uu-revenue-report/main/deploy/设置服务器.sh -o /tmp/setup.sh
+> sudo bash /tmp/setup.sh /tmp/deploy_key.pub
+> 完成后告诉我：ss -lntp 的 sshd 监听端口是多少、应用是否已在 4173 端口监听。
+> ```
+>
+> （`curl` 下载的脚本会自己从 GitHub 克隆最新代码，无需手动 clone。）
+
+#### 方式 B：Windows 服务器
+
+安装 Node.js 和 git，把 `deploy_key.pub` 拷到服务器，管理员 PowerShell 执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File D:\uu\uu-revenue-report\deploy\设置服务器.ps1 -PublicKeyFile D:\deploy_key.pub
 ```
 
-脚本会自动完成：安装并启动 OpenSSH 服务 → 建 `deploy` 账号并写入公钥 → 从 GitHub 拉代码 → 安装依赖并构建 → 注册开机自启服务（计划任务 `uu-report`，部署时自动重启）。
-
-> 安装目录默认 `D:\uu\uu-revenue-report`，若要改请同步修改 `.github/workflows/deploy.yml` 里的路径。
+> 安装目录默认：Linux `/opt/uu-report`、Windows `D:\uu\uu-revenue-report`。若修改，需同步改 `.github/workflows/deploy.yml` 里的脚本路径。
 
 ### 第 4 步：打通 SSH 端口
 
-- **云服务器**：安全组放行 TCP 22（或你改的端口）
-- **店内 Windows 主机**：路由器做端口映射（如公网 2222 → 内网 22），此时 Secrets 里 `SERVER_PORT` 填 `2222`
-- 建议改一个非常规端口并把 sshd_config 里的 `PasswordAuthentication` 设为 `no`（只允许密钥登录）
+GitHub 的机器必须能 SSH 连到你的服务器（这就是"空投"的通道）：
+
+- **云服务器**：安全组放行 TCP 22（或你改的端口）；本机 `ss -lntp | grep sshd` 确认 sshd 在监听
+- **店内 Windows 主机**：路由器做端口映射（如公网 2222 → 内网 22），Secrets 里 `SERVER_PORT` 填 `2222`
+- 建议改一个非常规端口，并把 sshd 的 `PasswordAuthentication` 设为 `no`（只允许密钥登录）
 
 ### 第 5 步：日常更新
 

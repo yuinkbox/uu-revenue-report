@@ -32,5 +32,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           command_timeout: 20m
-          # 注意：安装目录如果不是 D:\uu\uu-revenue-report，请同步修改下面路径
-          script: powershell -NoProfile -ExecutionPolicy Bypass -File "D:\uu\uu-revenue-report\deploy\deploy.ps1"
+          # Linux 服务器（默认）：安装目录不是 /opt/uu-report 请同步修改
+          script: bash /opt/uu-report/deploy/deploy.sh
+          # Windows 服务器请改用下面这行：
+          # script: powershell -NoProfile -ExecutionPolicy Bypass -File "D:\uu\uu-revenue-report\deploy\deploy.ps1"
