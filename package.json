@@ -8,8 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "start": "node server.js",
-    "test": "vite-node src/lib/reconcile.test.mjs && vite-node src/lib/period.test.mjs && vite-node test-importers.mjs",
-    "test:importers": "vite-node test-importers.mjs"
+    "test": "vite-node src/lib/reconcile.test.mjs && vite-node src/lib/period.test.mjs && vite-node src/lib/aggregate.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.15",

@@ -2,12 +2,10 @@ import { toNumber } from "./calc";
 
 const REPORTS_KEY = "daily-report-app.reports.v1";
 const SETTINGS_KEY = "daily-report-app.settings.v1";
-const WEEKLY_KEY = "daily-report-app.weekly.v1";
 
 export const defaultSettings = {
   storeName: "铜陵UU台球俱乐部",
   monthTarget: 120000,
-  managerPassword: "123456",
   reconcileTolerance: 3,
   tableCount: 27,
   openHours: 16,
@@ -25,9 +23,7 @@ export const defaultSettings = {
     "其他（见补充说明）"
   ],
   reportTitle: "UU台球俱乐部 · 经营报告",
-  productCatalog: [],
-  exportFolder: "",
-  grouponAmountSource: "detail"
+  productCatalog: []
 };
 
 export function loadReports() {
@@ -39,12 +35,15 @@ export function loadReports() {
   }
 }
 
+/** 旧数据迁移：旧周期类型归并为自定义周期，废弃字段剔除。 */
 export function migrateReport(report) {
   if (!report || typeof report !== "object") return report;
   const oldRecon = report.reconciliation || {};
+  const oldType = report.periodType || "day";
+  const periodType = oldType === "day" ? "day" : "custom";
   return {
     ...report,
-    periodType: report.periodType || "day",
+    periodType,
     endDate: report.endDate || report.date,
     periodTarget: report.periodTarget ?? "",
     status: report.status || "draft",
@@ -54,8 +53,8 @@ export function migrateReport(report) {
     productQty: report.productQty ?? 0,
     member: {
       ...(report.member || {}),
-      giftCardConsume: (toNumber(report.member?.giftCardConsume) + toNumber(report.member?.tableCardConsume)) || 0,
-      tableCardConsume: 0,
+      giftCardConsume:
+        (toNumber(report.member?.giftCardConsume) + toNumber(report.member?.tableCardConsume)) || 0,
       tableCardRecharge: report.member?.tableCardRecharge ?? 0,
       newMemberRecharge: report.member?.newMemberRecharge ?? 0,
       existingMemberRecharge: report.member?.existingMemberRecharge ?? 0
@@ -70,8 +69,6 @@ export function migrateReport(report) {
       settledAmount: g.settledAmount ?? 0
     })),
     reconciliation: {
-      systemRevenue: oldRecon.systemRevenue ?? null,
-      actualRevenue: oldRecon.actualRevenue ?? null,
       bankReceived: oldRecon.bankReceived ?? 0,
       cashDeposit: oldRecon.cashDeposit ?? 0,
       diffReason: oldRecon.diffReason ?? "",
@@ -84,6 +81,20 @@ export function migrateReport(report) {
 
 export function saveReports(reports) {
   localStorage.setItem(REPORTS_KEY, JSON.stringify(reports));
+}
+
+/** 按 updatedAt 取新合并两份报告列表（多端同步冲突时用）。 */
+export function mergeReportsByUpdatedAt(base, incoming) {
+  const map = new Map();
+  for (const r of base || []) {
+    if (r && r.date) map.set(r.date, r);
+  }
+  for (const r of incoming || []) {
+    if (!r || !r.date) continue;
+    const cur = map.get(r.date);
+    if (!cur || String(r.updatedAt || "") >= String(cur.updatedAt || "")) map.set(r.date, r);
+  }
+  return Array.from(map.values()).sort((a, b) => (a.date < b.date ? 1 : -1));
 }
 
 export function loadSettings() {
@@ -150,7 +161,6 @@ export function emptyReport(date, settings) {
       tableCardRecharge: 0,
       rechargeGiftAmount: 0,
       consumeAmount: 0,
-      tableCardConsume: 0,
       giftCardConsume: 0,
       newMemberRecharge: 0,
       existingMemberRecharge: 0
@@ -164,12 +174,19 @@ export function emptyReport(date, settings) {
         refundCount: 0,
         refundAmount: 0,
         settledAmount: 0
+      },
+      {
+        platform: "美团",
+        verifyCount: 0,
+        verifyAmount: 0,
+        newCustomerCount: 0,
+        refundCount: 0,
+        refundAmount: 0,
+        settledAmount: 0
       }
     ],
     abnormal: [{ type: "清台销单", count: 0, amount: 0, operator: "", remark: "" }],
     reconciliation: {
-      systemRevenue: null,
-      actualRevenue: null,
       bankReceived: 0,
       cashDeposit: 0,
       diffReason: "",
@@ -182,38 +199,4 @@ export function emptyReport(date, settings) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-}
-
-const ROLE_KEY = "daily-report-app.role";
-
-export function loadRole() {
-  try {
-    return localStorage.getItem(ROLE_KEY) === "manager" ? "manager" : "staff";
-  } catch {
-    return "staff";
-  }
-}
-
-export function saveRole(role) {
-  try {
-    localStorage.setItem(ROLE_KEY, role === "manager" ? "manager" : "staff");
-  } catch {
-    // ignore
-  }
-}
-
-export function loadWeekly() {
-  try {
-    return JSON.parse(localStorage.getItem(WEEKLY_KEY)) || [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveWeekly(list) {
-  try {
-    localStorage.setItem(WEEKLY_KEY, JSON.stringify(list));
-  } catch {
-    // ignore
-  }
 }

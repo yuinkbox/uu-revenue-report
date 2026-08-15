@@ -4,30 +4,26 @@ import AppSidebar from "@/components/app-sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import DataEntry from "@/pages/data-entry";
 import HistoryPage from "@/pages/history-page";
-import ImportPage from "@/pages/import-page";
 import PreviewPage from "@/pages/preview-page";
 import SettingsPage from "@/pages/settings-page";
 import { totalRevenue } from "@/lib/calc";
 import { saveViaDialog } from "@/lib/exporters";
-import { mergeImportPatch } from "@/lib/importers";
+import { fetchServerData, isServerMode, pushServerData } from "@/lib/api";
 import {
   defaultReportDate,
   defaultSettings,
   emptyReport,
   loadReports,
   loadSettings,
+  mergeReportsByUpdatedAt,
   migrateReport,
   saveReports,
   saveSettings,
   todayString,
 } from "@/lib/store";
-import type { ImportResult, PageKey, Report, Settings } from "@/types/report";
+import type { PageKey, Report, Settings } from "@/types/report";
 
-function pywebviewReady() {
-  return !!(window.pywebview?.api && typeof window.pywebview.api.save_data === "function");
-}
-
-const PAGE_KEYS: PageKey[] = ["entry", "import", "preview", "history", "settings"];
+const PAGE_KEYS: PageKey[] = ["entry", "preview", "history", "settings"];
 
 function pageFromHash(): PageKey {
   const h = window.location.hash.replace("#", "");
@@ -40,13 +36,17 @@ export default function App() {
   const [page, setPageState] = useState<PageKey>(pageFromHash);
   const [draft, setDraft] = useState<Report>(() => {
     const date = defaultReportDate();
-    const existing = (loadReports() as Report[]).find((r) => r.date === date);
+    const existing = (loadReports() as Report[]).find(
+      (r) => (r.periodType || "day") === "day" && r.date === date,
+    );
     return existing
       ? { ...existing, storeName: "铜陵UU台球俱乐部" }
       : (emptyReport(date, loadSettings()) as unknown as Report);
   });
-  const [importResult, setImportResult] = useState<ImportResult | null>(null);
-  const [bridgeReady, setBridgeReady] = useState(pywebviewReady);
+  const [baseVersion, setBaseVersion] = useState(0);
+  const baseVersionRef = useRef(0);
+  baseVersionRef.current = baseVersion;
+  const serverLoadedRef = useRef(false);
 
   // 页面切换同步到地址栏 hash，刷新后停留在当前页
   const setPage = useCallback((p: PageKey) => {
@@ -60,62 +60,75 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  // 启动时从服务器拉取数据（服务器为主，本机缓存兜底）
   useEffect(() => {
-    if (bridgeReady) return undefined;
-    if (pywebviewReady()) {
-      setBridgeReady(true);
-      return undefined;
-    }
-    const onReady = () => setBridgeReady(true);
-    window.addEventListener("pywebviewready", onReady);
-    return () => window.removeEventListener("pywebviewready", onReady);
-  }, [bridgeReady]);
-
-  useEffect(() => {
-    if (!bridgeReady) return undefined;
-    const api = window.pywebview?.api;
-    if (!api?.load_data) return undefined;
+    if (!isServerMode()) return undefined;
     let cancelled = false;
-    api.load_data().then((text) => {
-      if (cancelled || !text || text.startsWith("error:") || !text.trim()) return;
+    (async () => {
       try {
-        const data = JSON.parse(text);
-        if (!data || !Array.isArray(data.reports)) return;
-        saveReports(data.reports);
-        setReports(data.reports);
-        if (data.settings && typeof data.settings === "object") {
-          const merged = { ...defaultSettings, ...data.settings } as unknown as Settings;
-          saveSettings(merged);
-          setSettings(merged);
+        const data = await fetchServerData();
+        if (cancelled) return;
+        if (data && Array.isArray(data.reports)) {
+          const merged = mergeReportsByUpdatedAt(loadReports(), data.reports.map(migrateReport));
+          saveReports(merged);
+          setReports(merged);
+          if (data.settings && typeof data.settings === "object") {
+            const s = { ...defaultSettings, ...data.settings } as unknown as Settings;
+            s.storeName = "铜陵UU台球俱乐部";
+            saveSettings(s);
+            setSettings(s);
+          }
+          setBaseVersion(typeof data.version === "number" ? data.version : 0);
+          serverLoadedRef.current = true;
+          const existing = merged.find((r) => (r.periodType || "day") === "day" && r.date === defaultReportDate());
+          if (existing) setDraft({ ...existing, storeName: "铜陵UU台球俱乐部" });
         }
-        const existing = (data.reports as Report[]).find((r) => r.date === defaultReportDate());
-        if (existing) setDraft({ ...existing, storeName: "铜陵UU台球俱乐部" });
-      } catch {
-        // 备份文件损坏时忽略，继续用浏览器本地数据
+      } catch (err) {
+        if ((err as Error).message === "unauthorized") return;
+        // 服务器暂时不可用：允许后续保存继续尝试推送，成功时自动合并
+        serverLoadedRef.current = true;
+        if (!import.meta.env.DEV) toast.warning("服务器未连接，数据暂存本机");
       }
-    });
+    })();
     return () => {
       cancelled = true;
     };
-  }, [bridgeReady]);
+  }, []);
 
+  // 数据变化后推送到服务器（防抖），冲突时合并后重试
   useEffect(() => {
-    if (!bridgeReady) return undefined;
-    const api = window.pywebview?.api;
-    if (!api?.save_data) return undefined;
-    const payload = JSON.stringify({ reports, settings, exportedAt: new Date().toISOString() });
-    const t = setTimeout(() => {
+    if (!isServerMode() || !serverLoadedRef.current) return undefined;
+    const t = window.setTimeout(async () => {
       try {
-        const p = api.save_data!(payload);
-        if (p && typeof (p as Promise<string>).then === "function") (p as Promise<string>).catch(() => {});
-      } catch {
-        // 保存失败不打扰用户，数据仍在本机存储中
+        const payload = { reports, settings, version: baseVersionRef.current };
+        const res = await pushServerData(payload);
+        if (res && (res as { conflict?: boolean }).conflict) {
+          const server = (res as { server: { reports: Report[]; settings: Settings | null; version: number } }).server;
+          const merged = mergeReportsByUpdatedAt(reports, (server.reports || []).map(migrateReport));
+          saveReports(merged);
+          setReports(merged);
+          const s = { ...defaultSettings, ...(server.settings || {}) } as unknown as Settings;
+          s.storeName = "铜陵UU台球俱乐部";
+          saveSettings(s);
+          setSettings(s);
+          setBaseVersion(server.version);
+          const retry = await pushServerData({ reports: merged, settings: s, version: server.version });
+          if (retry && typeof (retry as { version?: number }).version === "number") {
+            setBaseVersion((retry as { version: number }).version);
+          }
+          toast.warning("数据已与其他电脑合并保存");
+        } else if (res && typeof (res as { version?: number }).version === "number") {
+          setBaseVersion((res as { version: number }).version);
+        }
+      } catch (err) {
+        if ((err as Error).message === "unauthorized") return;
+        // 网络失败：保留本机缓存，下次保存再试
       }
     }, 400);
-    return () => clearTimeout(t);
-  }, [reports, settings, bridgeReady]);
+    return () => window.clearTimeout(t);
+  }, [reports, settings]);
 
-  // 设置修改后自动持久化，避免新报告回到默认值
+  // 设置修改后自动持久化到本机缓存
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
@@ -128,8 +141,10 @@ export default function App() {
         createdAt: report.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      const exists = reports.some((r) => r.date === next.date);
-      const nextReports = exists ? reports.map((r) => (r.date === next.date ? next : r)) : [...reports, next];
+      const exists = reports.some((r) => r.date === next.date && r.periodType === next.periodType);
+      const nextReports = exists
+        ? reports.map((r) => (r.date === next.date && r.periodType === next.periodType ? next : r))
+        : [...reports, next];
       saveReports(nextReports);
       setReports(nextReports);
       setDraft(next);
@@ -164,18 +179,13 @@ export default function App() {
   };
 
   const handleDelete = (report: Report) => {
-    const next = reports.filter((r) => r.date !== report.date);
+    const next = reports.filter((r) => !(r.date === report.date && r.periodType === report.periodType));
     saveReports(next);
     setReports(next);
-    if (draft.date === report.date) setDraft(emptyReport(todayString(), settings) as unknown as Report);
+    if (draft.date === report.date && draft.periodType === report.periodType) {
+      setDraft(emptyReport(todayString(), settings) as unknown as Report);
+    }
     toast.success("报告已删除");
-  };
-
-  const handleApplyImport = (result: ImportResult | null) => {
-    if (result) setDraft((d) => mergeImportPatch(d, result.patch) as Report);
-    setImportResult(null);
-    setPage("entry");
-    toast.success("导入数据已应用到录入页");
   };
 
   const handleExportBackup = async () => {
@@ -209,7 +219,10 @@ export default function App() {
   };
 
   const today = todayString();
-  const todayTotal = totalRevenue(reports.find((r) => r.date === today));
+  const todayTotal =
+    draft.periodType === "day" && draft.date === today
+      ? totalRevenue(draft)
+      : totalRevenue(reports.find((r) => r.periodType === "day" && r.date === today));
 
   return (
     <div className="flex min-h-full">
@@ -223,17 +236,6 @@ export default function App() {
             onChange={setDraft}
             onSave={handleSave}
             onPreview={handlePreview}
-            onGoImport={() => setPage("import")}
-          />
-        ) : null}
-        {page === "import" ? (
-          <ImportPage
-            onApply={handleApplyImport}
-            onGoEntry={() => setPage("entry")}
-            reportDate={draft.date}
-            externalResult={importResult}
-            onClearExternal={() => setImportResult(null)}
-            grouponAmountSource={settings.grouponAmountSource}
           />
         ) : null}
         {page === "preview" ? (

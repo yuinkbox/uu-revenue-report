@@ -1,0 +1,36 @@
+name: 部署到服务器
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    name: 测试与构建（先在 GitHub 上验证）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  deploy:
+    name: SSH 部署到服务器
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: 服务器拉取最新代码并重启服务
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 20m
+          # 注意：安装目录如果不是 D:\uu\uu-revenue-report，请同步修改下面路径
+          script: powershell -NoProfile -ExecutionPolicy Bypass -File "D:\uu\uu-revenue-report\deploy\deploy.ps1"

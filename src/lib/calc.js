@@ -1,4 +1,5 @@
-import { findReportForRange, lastYearRange, previousPeriodRange } from "./period";
+import { findReportForRange, lastYearRange, previousPeriodRange, rangeDays } from "./period";
+import { aggregateDayReports } from "./aggregate";
 
 export function toNumber(v) {
   const n = Number(v);
@@ -17,14 +18,14 @@ export function totalRevenue(report) {
     toNumber(report.revenue.coach) +
     toNumber(report.revenue.other);
   if (breakdown > 0) {
-    // 经营收入 = 商云宝营业额 + 团购核销净额（未提现）
+    // 经营收入 = 现场营业额 + 团购核销净额（未提现）
     return round2(breakdown + grouponAmount);
   }
   // 只填总额时以用户填的总数为准
   return toNumber(report.quickRevenue);
 }
 
-/** 商云宝直营营业额（不含团购核销）。 */
+/** 现场营业额（不含团购核销）。 */
 export function directRevenue(report) {
   if (!report) return 0;
   const breakdown =
@@ -49,6 +50,12 @@ export function round2(value) {
   return Math.round(toNumber(value) * 100) / 100;
 }
 
+function localToday() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /** 团购平台当日结算到账（不计入现场实收）。 */
 export function grouponSettledAmount(report) {
   return round2(
@@ -57,7 +64,7 @@ export function grouponSettledAmount(report) {
 }
 
 export function reconcileMetrics(report, settings) {
-  // 应到账 = 商云宝营业额 + 储值卡充值 + 台费卡充值 − 储值卡消费 − 台费卡/礼金卡消费
+  // 应到账 = 现场营业额 + 储值卡充值 + 台费卡充值 − 储值卡消费 − 台费卡/礼金卡消费
   const expectedRevenue = round2(
     directRevenue(report) +
       toNumber(report.member?.rechargeAmount) +
@@ -76,7 +83,11 @@ export function reconcileMetrics(report, settings) {
   const tolerance = toNumber(settings?.reconcileTolerance) || 3;
   let tier = "normal";
   if (Math.abs(diff) > tolerance) {
-    tier = report.reconciliation?.diffStatus === "explained" ? "explained" : "pending";
+    // 已选差异原因或标记已解释，视为已解释
+    tier =
+      report.reconciliation?.diffStatus === "explained" || String(report.reconciliation?.diffReason || "").trim()
+        ? "explained"
+        : "pending";
   }
   return { expectedRevenue, actualReceived, diff, tier };
 }
@@ -159,32 +170,65 @@ export function topProducts(report, limit = 5) {
     .slice(0, limit);
 }
 
+/** 只用“截至今天”的日报计算累计指标，避免未来日期与周期快照重复计入。 */
+function dayReportsUpToToday(reports) {
+  const today = localToday();
+  return (reports || []).filter(
+    (r) => (r.periodType || "day") === "day" && r.date && r.date <= today
+  );
+}
+
 export function reportMetrics(report, reports, settings) {
   const total = totalRevenue(report);
   const revenue = report.revenue;
-  const periodType = report.periodType || "day";
-  const prevRange = previousPeriodRange(periodType, report.date);
-  const prevPeriodReport = findReportForRange(reports, periodType, prevRange.start, prevRange.end);
-  const periodMom = prevPeriodReport
-    ? percent(total - totalRevenue(prevPeriodReport), totalRevenue(prevPeriodReport))
-    : null;
-  const lyRange = lastYearRange(periodType, report.date);
-  const lyPeriodReport = findReportForRange(reports, periodType, lyRange.start, lyRange.end);
-  const periodYoy = lyPeriodReport
-    ? percent(total - totalRevenue(lyPeriodReport), totalRevenue(lyPeriodReport))
-    : null;
-  const prevReports = reports
-    .filter((r) => r.date < report.date)
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
-  const prevReport = prevReports[0];
-  const prevTotal = prevReport ? totalRevenue(prevReport) : null;
-  const mom = prevTotal ? ((total - prevTotal) / prevTotal) * 100 : null;
+  const periodType = report.periodType === "custom" ? "custom" : "day";
+  const endDate = report.endDate || report.date;
 
+  // 环比：日报=前一天；自定义=紧邻的等长区间（用区间内日报实时汇总）
+  const prevRange = previousPeriodRange(periodType, report.date, endDate);
+  let periodMom = null;
+  let prevTotal = null;
+  if (periodType === "day") {
+    const prevReport = findReportForRange(reports, "day", prevRange.start, prevRange.end);
+    prevTotal = prevReport ? totalRevenue(prevReport) : null;
+    periodMom = prevTotal !== null && prevTotal !== 0 ? percent(total - prevTotal, prevTotal) : null;
+  } else {
+    const agg = aggregateDayReports(reports, prevRange.start, prevRange.end);
+    if (agg.dayCount > 0 && agg.total > 0) {
+      prevTotal = agg.total;
+      periodMom = percent(total - agg.total, agg.total);
+    } else {
+      const stored = findReportForRange(reports, "custom", prevRange.start, prevRange.end);
+      if (stored) {
+        prevTotal = totalRevenue(stored);
+        periodMom = prevTotal !== 0 ? percent(total - prevTotal, prevTotal) : null;
+      }
+    }
+  }
+
+  // 同比：去年同区间
+  const lyRange = lastYearRange(periodType, report.date, endDate);
+  let periodYoy = null;
+  const lyAgg = aggregateDayReports(reports, lyRange.start, lyRange.end);
+  const lyTotal = lyAgg.dayCount > 0 ? lyAgg.total : null;
+  if (lyTotal !== null && lyTotal > 0) {
+    periodYoy = percent(total - lyTotal, lyTotal);
+  } else {
+    const storedLy = findReportForRange(reports, "custom", lyRange.start, lyRange.end);
+    if (storedLy) {
+      const t = totalRevenue(storedLy);
+      periodYoy = t > 0 ? percent(total - t, t) : null;
+    }
+  }
+
+  const allDayReports = dayReportsUpToToday(reports);
   const month = report.date.slice(0, 7);
-  const monthReports = reports.filter((r) => r.date.startsWith(month));
+  const monthReports = allDayReports.filter((r) => r.date.startsWith(month));
   const monthAccum = monthReports.reduce((sum, r) => sum + totalRevenue(r), 0);
   const monthTarget = toNumber(settings.monthTarget);
-  const monthRate = monthTarget ? (monthAccum / monthTarget) * 100 : null;
+  // 仅当区间完全落在同一自然月内才用月度目标
+  const sameMonth = periodType === "day" || endDate.slice(0, 7) === report.date.slice(0, 7);
+  const monthRate = monthTarget && sameMonth ? (monthAccum / monthTarget) * 100 : null;
 
   const openMinutes = toNumber(report.table.openMinutes);
   const salableMinutes = toNumber(report.table.salableMinutes);
@@ -230,10 +274,6 @@ export function reportMetrics(report, reports, settings) {
     { count: 0, amount: 0 }
   );
 
-  const systemRevenue = report.reconciliation.systemRevenue === null || report.reconciliation.systemRevenue === "" ? null : toNumber(report.reconciliation.systemRevenue);
-  const actualRevenue = report.reconciliation.actualRevenue === null || report.reconciliation.actualRevenue === "" ? null : toNumber(report.reconciliation.actualRevenue);
-  const diff = systemRevenue !== null && actualRevenue !== null ? round2(systemRevenue - actualRevenue) : null;
-
   const breakdownTotal =
     toNumber(revenue.table) +
     toNumber(revenue.product) +
@@ -250,14 +290,20 @@ export function reportMetrics(report, reports, settings) {
   const grouponNet = round2(groupon.verifyAmount - groupon.refundAmount);
   const settledAmount = round2(groupon.settledAmount);
   const pendingToday = round2(grouponNet - settledAmount);
-  // 累计待收：同周期类型所有报表（含当前未保存报表）的核销净额 − 已结算到账
-  const periodKey = report.periodType || "day";
-  let pendingReports = reports.filter((r) => (r.periodType || "day") === periodKey);
-  if (!pendingReports.some((r) => r.date === report.date)) {
-    pendingReports = [...pendingReports, report];
+
+  // 累计待收 / 累计差额：只统计截至今天的日报（含当前正在编辑的日报）
+  const dayReports = dayReportsUpToToday(reports);
+  const curIsDay = periodType === "day";
+  if (
+    curIsDay &&
+    report.date &&
+    report.date <= localToday() &&
+    !dayReports.some((r) => r.date === report.date)
+  ) {
+    dayReports.push(report);
   }
   const pendingTotal = round2(
-    pendingReports.reduce((sum, r) => {
+    dayReports.reduce((sum, r) => {
       const net = (r.groupon || []).reduce(
         (s, g) => s + toNumber(g.verifyAmount) - toNumber(g.refundAmount),
         0,
@@ -267,20 +313,24 @@ export function reportMetrics(report, reports, settings) {
     }, 0),
   );
   const reconcileTotal = round2(
-    pendingReports.reduce((sum, r) => sum + reconcileMetrics(r, settings).diff, 0),
+    dayReports.reduce((sum, r) => sum + reconcileMetrics(r, settings).diff, 0),
   );
+
   if (breakdownTotal > 0 && grouponNet > 0) {
     shareItems.push({ key: "groupon", label: "团购核销", value: grouponNet });
   }
   const shares = shareItems.map((item) => ({ ...item, rate: percent(item.value, total) }));
+
+  const days = rangeDays(report.date, endDate);
+  const dailyAverage = periodType === "custom" ? round2(total / days) : null;
 
   return {
     total,
     periodMom,
     periodYoy,
     shares,
-    mom,
     prevTotal,
+    dailyAverage,
     monthAccum,
     monthRate,
     utilization,
@@ -294,10 +344,7 @@ export function reportMetrics(report, reports, settings) {
     pendingToday,
     pendingTotal,
     reconcileTotal,
-    reconcileCount: pendingReports.length,
-    abnormal,
-    diff,
-    systemRevenue,
-    actualRevenue
+    reconcileCount: dayReports.length,
+    abnormal
   };
 }

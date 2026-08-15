@@ -20,10 +20,7 @@ import type { Report } from "@/types/report";
 
 const PERIOD_ORDER: { key: string; label: string }[] = [
   { key: "day", label: "日报" },
-  { key: "week", label: "周报" },
-  { key: "quarter", label: "季报" },
-  { key: "halfYear", label: "半年报" },
-  { key: "year", label: "年报" },
+  { key: "custom", label: "周期报告" },
 ];
 
 function rangeText(r: Report) {
@@ -47,12 +44,17 @@ export default function HistoryPage({
   const [query, setQuery] = useState("");
 
   const groups = useMemo(() => {
+    const q = query.trim();
     const filtered = reports.filter(
-      (r) => !query || rangeText(r).includes(query.trim()) || String(r.date).includes(query.trim()),
+      (r) =>
+        !q ||
+        rangeText(r).includes(q) ||
+        String(r.date).includes(q) ||
+        String(r.notes || "").includes(q),
     );
     const map = new Map<string, Report[]>();
     for (const r of filtered) {
-      const key = r.periodType || "day";
+      const key = r.periodType === "custom" ? "custom" : "day";
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
     }
@@ -74,7 +76,7 @@ export default function HistoryPage({
               <Input
                 type="search"
                 value={query}
-                placeholder="搜索日期范围，如 2026-08"
+                placeholder="搜索日期或备注，如 2026-08"
                 className="h-9 w-[220px] bg-card pl-8"
                 onChange={(e) => setQuery(e.target.value)}
               />

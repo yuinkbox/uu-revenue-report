@@ -29,10 +29,7 @@ import type { Report, Settings } from "@/types/report";
 
 const PERIOD_LABEL: Record<string, string> = {
   day: "日报",
-  week: "周报",
-  quarter: "季报",
-  halfYear: "半年报",
-  year: "年报",
+  custom: "周期报告",
 };
 
 function KpiCell({ label, value, bad, good }: { label: string; value: string; bad?: boolean; good?: boolean }) {
@@ -82,18 +79,28 @@ export default function PreviewPage({
   const prodSum = productSummary(report);
   const [copied, setCopied] = useState(false);
 
-  const periodType = report.periodType || "day";
+  const periodType = report.periodType === "custom" ? "custom" : "day";
   const periodLabel = PERIOD_LABEL[periodType] || "日报";
-  const rangeLabel =
-    periodType === "day" ? report.date : `${report.date} ~ ${report.endDate || report.date}`;
+  const rangeLabel = periodType === "day" ? report.date : `${report.date} ~ ${report.endDate || report.date}`;
   const isDay = periodType === "day";
-  const target = isDay || periodType === "week" ? settings.monthTarget : report.periodTarget;
+  const target = isDay ? settings.monthTarget : report.periodTarget;
   const targetRate = toNumber(target) > 0 ? (metrics.total / toNumber(target)) * 100 : null;
-  const targetLabel = isDay || periodType === "week" ? "目标达成率·月目标" : "目标达成率·本期目标";
+  const targetLabel = isDay ? "目标达成率·月目标" : "目标达成率·本期目标";
 
   const warnings: string[] = [];
   if (rm.tier !== "normal") warnings.push(`对账差异 ${money(rm.diff)}，需要核对`);
   if (!report.notes.trim()) warnings.push("缺少备注，建议补充经营小结");
+  if (
+    !isDay &&
+    report.aggregationMeta &&
+    report.aggregationMeta.missingDates.length > 0
+  ) {
+    warnings.push(
+      `本周期汇总缺少 ${report.aggregationMeta.missingDates.length} 天日报：${report.aggregationMeta.missingDates.slice(0, 5).join("、")}${
+        report.aggregationMeta.missingDates.length > 5 ? "…" : ""
+      }，补录日报后请重新汇总`,
+    );
+  }
 
   async function copyText() {
     const text = buildWeChatText(report, metrics, settings);
@@ -189,7 +196,10 @@ export default function PreviewPage({
 
         <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-4">
           <div className="bg-muted/40">
-            <KpiCell label={targetLabel} value={targetRate === null ? "-" : `${targetRate.toFixed(1)}%`} />
+            <KpiCell
+              label={!isDay && targetRate === null ? "日均营收" : targetLabel}
+              value={!isDay && targetRate === null ? money(metrics.dailyAverage ?? 0) : targetRate === null ? "-" : `${targetRate.toFixed(1)}%`}
+            />
           </div>
           <div className="bg-muted/40">
             <KpiCell
@@ -257,7 +267,9 @@ export default function PreviewPage({
           {hasGroupon ? (
             <div className="flex flex-col gap-1.5 text-[13px]">
               {report.groupon
-                .filter((g) => g.platform && (g.verifyCount || g.verifyAmount || g.refundCount || g.refundAmount))
+                .filter(
+                  (g) => g.platform && (g.verifyCount || g.verifyAmount || g.refundCount || g.refundAmount || g.settledAmount),
+                )
                 .map((g) => (
                   <div
                     key={g.platform}
@@ -316,9 +328,9 @@ export default function PreviewPage({
                   <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">商云宝营业额+团购核销净额</td>
                 </tr>
                 <tr className="border-b">
-                  <td className="px-3 py-2 font-medium">商云宝营业额（参考）</td>
+                  <td className="px-3 py-2 font-medium">现场营业额（分项合计）</td>
                   <td className="nums px-3 py-2 text-right">{money(direct)}</td>
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">台桌+商品+教练</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">台桌+商品+教练+其他</td>
                 </tr>
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">储值卡充值（预收款）</td>
@@ -396,7 +408,7 @@ export default function PreviewPage({
                   </td>
                 </tr>
                 <tr className="border-b">
-                  <td className="px-3 py-2 font-medium">累计差额（同周期全部日报）</td>
+                  <td className="px-3 py-2 font-medium">累计差额（全部日报）</td>
                   <td className="nums px-3 py-2 text-right">{signedMoney(metrics.reconcileTotal)}</td>
                   <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">
                     累计实收−应到账；接近 0 = 多为到账时间差
@@ -414,6 +426,16 @@ export default function PreviewPage({
           {report.revenue.remark ? (
             <p className="mt-2 text-[12px] text-muted-foreground">营收备注：{report.revenue.remark}</p>
           ) : null}
+        </DocSection>
+
+        <DocSection title="完成事项与库存">
+          <dl>
+            <DlRow
+              label="完成事项"
+              value={<span className="whitespace-pre-wrap text-right">{report.done || "-"}</span>}
+            />
+            <DlRow label="库存预警" value={report.lowStockItems || "-"} />
+          </dl>
         </DocSection>
 
         <footer className="mt-8 flex items-center justify-between border-t pt-4 text-[11px] text-muted-foreground">

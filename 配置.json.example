@@ -1,3 +1,5 @@
 {
-  "dataDir": "D:\\共享\\球房数据"
+  "port": 4173,
+  "dataDir": "./数据",
+  "password": ""
 }

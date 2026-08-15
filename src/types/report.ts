@@ -33,21 +33,22 @@ export interface ReportAbnormal {
   remark: string;
 }
 
+/** 从日报汇总时的元信息（用于提示覆盖天数与缺失日期）。 */
+export interface AggregationMeta {
+  dayCount: number;
+  rangeDays: number;
+  missingDates: string[];
+  generatedAt: string;
+}
+
 export interface Report {
   date: string;
-  periodType?: "day" | "week" | "quarter" | "halfYear" | "year";
+  /** day = 单日报；custom = 自由起止周期（从日报汇总生成）。 */
+  periodType?: "day" | "custom";
   endDate?: string;
   periodTarget?: Num;
   storeName: string;
   status?: ReportStatus;
-  submittedAt?: string;
-  submittedBy?: string;
-  reviewingAt?: string;
-  reviewingBy?: string;
-  finalizedAt?: string;
-  finalizedBy?: string;
-  sentAt?: string;
-  sentBy?: string;
   cashReceived?: Num;
   customerCount?: Num;
   productCost?: Num;
@@ -69,7 +70,6 @@ export interface Report {
     tableCardRecharge?: Num;
     rechargeGiftAmount: Num;
     consumeAmount: Num;
-    tableCardConsume?: Num;
     giftCardConsume?: Num;
     newMemberRecharge?: Num;
     existingMemberRecharge?: Num;
@@ -77,8 +77,6 @@ export interface Report {
   groupon: ReportGroupon[];
   abnormal: ReportAbnormal[];
   reconciliation: {
-    systemRevenue: Num | null;
-    actualRevenue: Num | null;
     bankReceived?: Num;
     cashDeposit?: Num;
     diffReason?: string;
@@ -88,6 +86,7 @@ export interface Report {
   };
   done: string;
   notes: string;
+  aggregationMeta?: AggregationMeta;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -100,7 +99,6 @@ export interface CatalogProduct {
 export interface Settings {
   storeName: string;
   monthTarget: Num;
-  managerPassword: string;
   reconcileTolerance: Num;
   tableCount: Num;
   openHours: Num;
@@ -111,20 +109,14 @@ export interface Settings {
   diffReasons: string[];
   reportTitle: string;
   productCatalog: CatalogProduct[];
-  exportFolder: string;
-  grouponAmountSource: string;
 }
 
-export interface ImportMessage {
-  ok: boolean;
-  text: string;
-}
+export type PageKey = "entry" | "preview" | "history" | "settings";
 
-export interface ImportResult {
-  ok: boolean;
-  messages: ImportMessage[];
-  patch: Record<string, unknown>;
-  failed?: number;
+/** 服务器数据文件结构。 */
+export interface ServerData {
+  reports: Report[];
+  settings: Settings | null;
+  version: number;
+  updatedAt: string;
 }
-
-export type PageKey = "entry" | "import" | "preview" | "history" | "settings" | "weekly";

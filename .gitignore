@@ -13,6 +13,9 @@ dist-ssr
 build
 *.tsbuildinfo
 *.local
+配置.json
+数据
+deploy-keys
 球房数字化工具·业务交接文档.docx
 
 # Editor directories and files

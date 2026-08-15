@@ -1,11 +1,10 @@
-import { ClipboardList, FileText, History, Settings, Upload } from "lucide-react";
+import { ClipboardList, FileText, History, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { moneyShort } from "@/lib/format";
 import type { PageKey } from "@/types/report";
 
 const NAV_ITEMS: { key: PageKey; label: string; icon: typeof ClipboardList }[] = [
   { key: "entry", label: "报告数据", icon: ClipboardList },
-  { key: "import", label: "导入数据", icon: Upload },
   { key: "preview", label: "报告预览", icon: FileText },
   { key: "history", label: "历史报告", icon: History },
   { key: "settings", label: "基础设置", icon: Settings },
@@ -66,7 +65,7 @@ export default function AppSidebar({
 
       <div className="mt-auto border-t px-2 pt-3">
         <p className="truncate text-[13px] font-medium">{storeName}</p>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">数据保存在本机 · 自动备份</p>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">数据保存在服务器 · 自动备份</p>
       </div>
     </aside>
   );

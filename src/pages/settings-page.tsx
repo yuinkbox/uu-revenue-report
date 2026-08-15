@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { Database, FolderOpen, Info, Save, ShieldCheck, SlidersHorizontal, Store } from "lucide-react";
+import { useRef } from "react";
+import { Database, Info, Save, ShieldCheck, SlidersHorizontal, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, NumberInput, TextInput } from "@/components/fields";
 import PageHeader from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
-import { cn } from "@/lib/utils";
+import { toNumber } from "@/lib/calc";
 import type { Settings } from "@/types/report";
 
 export default function SettingsPage({
@@ -23,26 +22,20 @@ export default function SettingsPage({
   onImportBackup: (f: File) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [message, setMessage] = useState("");
-  const [dataDir, setDataDir] = useState("");
-
-  useEffect(() => {
-    const api = window.pywebview?.api as { get_data_dir?: () => Promise<string> } | undefined;
-    if (api?.get_data_dir) {
-      api
-        .get_data_dir()
-        .then((p) => setDataDir(p))
-        .catch(() => {});
-    }
-  }, []);
 
   const set = (patch: Partial<Settings>) => onChange({ ...settings, ...patch });
+
+  const setTableParams = (patch: Partial<Settings>) => {
+    const next = { ...settings, ...patch };
+    next.salableMinutes = Math.round(toNumber(next.tableCount) * toNumber(next.openHours) * 60);
+    onChange(next);
+  };
 
   return (
     <div className="mx-auto w-full max-w-[1040px]">
       <PageHeader
         title="基础设置"
-        description="门店、目标、台桌和人员配置"
+        description="门店、目标、台桌和对账参数"
         actions={
           <>
             <Button variant="outline" onClick={() => fileRef.current?.click()}>
@@ -85,17 +78,17 @@ export default function SettingsPage({
 
         <SectionCard
           title="数据安全"
-          subtitle="桌面版会自动把日报和设置备份到数据文件夹"
+          subtitle="数据保存在服务器，每次保存自动生成备份副本（保留最近 30 份）"
           icon={<ShieldCheck className="size-4" />}
         >
           <div className="flex items-start gap-2.5 rounded-lg border bg-muted/40 px-4 py-3 text-[13px] text-muted-foreground">
             <Info className="mt-0.5 size-4 shrink-0" />
             <span>
-              数据文件夹：<span className="nums font-medium text-foreground">{dataDir || "exe 旁的「数据」文件夹"}</span>
+              所有电脑通过浏览器访问同一个服务器地址，数据实时同步、服务器自动备份。
               <br />
-              多台电脑共用时，可在 exe 旁的「配置.json」里指定同一份数据文件夹（如网盘同步目录、共享盘）。
+              服务器上的「配置.json」可设置端口、数据目录与访问密码；密码留空则局域网内免登录。
               <br />
-              「导出全部数据」= 把报告和设置存成一个 JSON 文件，用于换电脑迁移或手动存档；「导入全部数据」= 从该文件恢复。
+              「导出全部数据」= 把报告和设置存成一个 JSON 文件，用于离线存档；「导入全部数据」= 从该文件恢复（会覆盖同名日期报告）。
             </span>
           </div>
         </SectionCard>
@@ -106,14 +99,14 @@ export default function SettingsPage({
               <NumberInput value={settings.monthTarget} onChange={(v) => set({ monthTarget: v })} />
             </Field>
             <Field label="台桌数">
-              <div className="flex h-9 items-center rounded-md border bg-muted/50 px-3 text-sm font-medium">27 张</div>
+              <NumberInput value={settings.tableCount} step="1" onChange={(v) => setTableParams({ tableCount: v })} />
             </Field>
-            <Field label="每日营业时长" hint="10:00 - 次日 02:00">
-              <div className="flex h-9 items-center rounded-md border bg-muted/50 px-3 text-sm font-medium">16 小时</div>
+            <Field label="每日营业时长（小时）" hint="10:00 - 次日 02:00 为 16 小时">
+              <NumberInput value={settings.openHours} step="1" onChange={(v) => setTableParams({ openHours: v })} />
             </Field>
-            <Field label="可售总时长" hint="27 张 × 16 小时 × 60 分钟">
+            <Field label="可售总时长" hint="台桌数 × 营业时长 × 60 分钟，自动计算">
               <div className="nums flex h-9 items-center rounded-md border bg-muted/50 px-3 text-sm font-medium">
-                25,920 分钟
+                {Math.round(toNumber(settings.tableCount) * toNumber(settings.openHours) * 60).toLocaleString("zh-CN")} 分钟
               </div>
             </Field>
           </div>
@@ -136,76 +129,17 @@ export default function SettingsPage({
         </SectionCard>
 
         <SectionCard
-          title="团购核销金额口径"
-          subtitle="导入第三方平台报表和经营报表时，日报里「团购核销金额」按哪个数计算"
-          icon={<Database className="size-4" />}
+          title="异常类型"
+          subtitle="录入页「异常记录」的类型下拉选项，每行一个"
+          icon={<ShieldCheck className="size-4" />}
         >
-          <RadioGroup
-            value={settings.grouponAmountSource || "detail"}
-            onValueChange={(v) => set({ grouponAmountSource: v })}
-            className="grid grid-cols-1 gap-3 sm:grid-cols-2"
-          >
-            {[
-              {
-                value: "detail",
-                title: "明细口径",
-                desc: "按第三方平台报表逐笔「结算金额/售价」合计",
-              },
-              {
-                value: "summary",
-                title: "汇总口径",
-                desc: "按经营报表的「美团团购/抖音团购」金额",
-              },
-            ].map((opt) => {
-              const active = (settings.grouponAmountSource || "detail") === opt.value;
-              return (
-                <label
-                  key={opt.value}
-                  className={cn(
-                    "flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors",
-                    active ? "border-foreground/60 bg-muted/50" : "hover:bg-muted/40",
-                  )}
-                >
-                  <RadioGroupItem value={opt.value} className="mt-0.5" />
-                  <span>
-                    <span className="block text-[13px] font-medium">{opt.title}</span>
-                    <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{opt.desc}</span>
-                  </span>
-                </label>
-              );
-            })}
-          </RadioGroup>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            单数两种口径都按第三方明细统计；两个口径金额不同时，以你在美团/抖音后台核对的数为准。选一次即可，之后每次导入都按这个口径。
-          </p>
+          <Textarea
+            rows={4}
+            className="bg-card"
+            value={(settings.abnormalTypes || []).join("\n")}
+            onChange={(e) => set({ abnormalTypes: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })}
+          />
         </SectionCard>
-
-        <SectionCard
-          title="商云宝经营报表文件夹"
-          subtitle="把商云宝导出的经营报表放到这里，店长就能一键导入自动填入日报"
-          icon={<FolderOpen className="size-4" />}
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="nums flex h-9 min-w-[240px] flex-1 items-center truncate rounded-md border bg-muted/50 px-3 text-[13px] text-muted-foreground">
-              {settings.exportFolder || "尚未设置"}
-            </div>
-            <Button
-              variant="outline"
-              onClick={async () => {
-                if (!window.pywebview?.api?.select_folder) {
-                  setMessage("只有桌面版支持选择文件夹");
-                  return;
-                }
-                const folder = await window.pywebview.api.select_folder();
-                if (folder && !folder.startsWith("error:")) set({ exportFolder: folder });
-              }}
-            >
-              <FolderOpen /> 选择文件夹
-            </Button>
-          </div>
-        </SectionCard>
-
-        {message ? <p className="text-[13px] text-muted-foreground">{message}</p> : null}
       </div>
     </div>
   );

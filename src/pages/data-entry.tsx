@@ -1,16 +1,18 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import {
+  AlertTriangle,
   Banknote,
   Boxes,
   CalendarDays,
   ClipboardCheck,
-  FolderSearch,
+  Layers,
+  Plus,
   RefreshCw,
   Save,
   Table2,
   Target,
+  Trash2,
   TrendingUp,
-  Upload,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -32,19 +34,36 @@ import {
   round2,
   toNumber,
 } from "@/lib/calc";
-import { applyImportPatch, importTaikeduoExcel, mergeMember, summarizeWeeklyFiles } from "@/lib/importers";
+import { aggregateDayReports } from "@/lib/aggregate";
 import { money, signedMoney, signedRate } from "@/lib/format";
-import { PERIOD_TYPES, periodRange } from "@/lib/period";
+import {
+  PERIOD_TYPES,
+  lastNDays,
+  lastMonth,
+  lastWeek,
+  thisMonth,
+  thisQuarter,
+  thisWeek,
+  thisYear,
+} from "@/lib/period";
 import { todayString } from "@/lib/store";
 import type { Report, Settings } from "@/types/report";
 
 const PERIOD_LABEL: Record<string, string> = {
   day: "日报",
-  week: "周报",
-  quarter: "季报",
-  halfYear: "半年报",
-  year: "年报",
+  custom: "周期报告",
 };
+
+const PRESETS = [
+  { label: "近7天", range: () => lastNDays(7, todayString()) },
+  { label: "本周", range: () => thisWeek(todayString()) },
+  { label: "上周", range: () => lastWeek(todayString()) },
+  { label: "近30天", range: () => lastNDays(30, todayString()) },
+  { label: "本月", range: () => thisMonth(todayString()) },
+  { label: "上月", range: () => lastMonth(todayString()) },
+  { label: "本季", range: () => thisQuarter(todayString()) },
+  { label: "今年", range: () => thisYear(todayString()) },
+];
 
 export default function DataEntry({
   report,
@@ -53,7 +72,6 @@ export default function DataEntry({
   onChange,
   onSave,
   onPreview,
-  onGoImport,
 }: {
   report: Report;
   reports: Report[];
@@ -61,17 +79,16 @@ export default function DataEntry({
   onChange: (r: Report) => void;
   onSave: () => void;
   onPreview: () => void;
-  onGoImport: () => void;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const periodType = report.periodType || "day";
+  const periodType = report.periodType === "custom" ? "custom" : "day";
   const isDay = periodType === "day";
+  const endDate = isDay ? report.date : report.endDate || report.date;
   const metrics = reportMetrics(report, reports, settings);
   const rm = reconcileMetrics(report, settings);
   const diagnosticLines = reconcileDiagnostics(report, metrics, settings);
   const ticket = averageTicket(report);
 
-  const target = isDay || periodType === "week" ? settings.monthTarget : report.periodTarget;
+  const target = isDay ? settings.monthTarget : report.periodTarget;
   const targetRate = toNumber(target) > 0 ? (metrics.total / toNumber(target)) * 100 : null;
 
   const set = (patch: Partial<Report>) => onChange({ ...report, ...patch });
@@ -79,13 +96,47 @@ export default function DataEntry({
     set({ [key]: { ...(report[key] as object), ...patch } } as Partial<Report>);
 
   const applyPeriodType = (type: string) => {
-    const range = periodRange(type, todayString());
-    set({ periodType: type as Report["periodType"], date: range.start, endDate: range.end });
+    const day = todayString();
+    if (type === "custom") {
+      const r = lastNDays(7, day);
+      set({ periodType: "custom", date: r.start, endDate: r.end });
+    } else {
+      set({ periodType: "day", date: day, endDate: day });
+    }
   };
 
-  const resetRange = () => {
-    const range = periodRange(periodType, todayString());
-    set({ date: range.start, endDate: range.end });
+  const applyPreset = (fn: () => { start: string; end: string }) => {
+    const r = fn();
+    set({ date: r.start, endDate: r.end });
+  };
+
+  const setStartDate = (v: string) => {
+    if (!v) return;
+    set({ date: v, endDate: isDay ? v : endDate < v ? v : endDate });
+  };
+
+  const runAggregate = () => {
+    const start = report.date;
+    const end = isDay ? report.date : report.endDate || report.date;
+    if (!start || !end || end < start) {
+      toast.warning("请先选择正确的起止日期");
+      return;
+    }
+    const { patch, meta } = aggregateDayReports(reports, start, end);
+    if (!patch) {
+      set({ aggregationMeta: meta });
+      toast.warning(meta.missingDates.length ? `该范围内没有已保存的日报（缺 ${meta.missingDates.length} 天）` : "该范围内没有日报数据");
+      return;
+    }
+    onChange({
+      ...report,
+      ...(patch as Partial<Report>),
+      periodType: report.periodType,
+      date: report.date,
+      endDate: report.endDate,
+      aggregationMeta: meta,
+    });
+    toast.success(isDay ? "已载入该日报数据" : `已按 ${meta.dayCount} 天日报汇总`);
   };
 
   const grouponRows = useMemo(() => {
@@ -104,111 +155,10 @@ export default function DataEntry({
     set({ groupon: next });
   };
 
-  const handleImportFiles = async (files: FileList | null) => {
-    if (!files || !files.length) return;
-    try {
-      const list = Array.from(files);
-      if (isDay) {
-        let next = report;
-        let applied = 0;
-        let detailMember: Partial<Report["member"]> | null = null;
-        for (const file of list) {
-          const res = await importTaikeduoExcel(file, report.date, {
-            grouponAmountSource: settings.grouponAmountSource,
-          });
-          const patch = (res as { patch?: Record<string, unknown> }).patch;
-          if (res.ok && patch) {
-            const template = (res as { template?: string }).template;
-            const detailTemplates = ["memberCardChange", "giftCardChange", "memberCardConsume"];
-            if (template && detailTemplates.includes(template)) {
-              detailMember = mergeMember(detailMember || {}, (patch.member || {}) as object);
-              const { member: _member, ...rest } = patch;
-              next = applyImportPatch(next, rest) as Report;
-            } else {
-              next = applyImportPatch(next, patch) as Report;
-            }
-            const prodPatch = patch.products as Array<{ saleQty?: number; saleCost?: number; saleAmount?: number }> | undefined;
-            if (Array.isArray(prodPatch) && prodPatch.length) {
-              const qty = prodPatch.reduce((s, p) => s + toNumber(p.saleQty), 0);
-              const cost = prodPatch.reduce((s, p) => s + toNumber(p.saleCost), 0);
-              const amount = prodPatch.reduce((s, p) => s + toNumber(p.saleAmount), 0);
-              next = {
-                ...next,
-                productQty: qty,
-                productCost: cost,
-                revenue: { ...next.revenue, product: amount }
-              };
-            }
-            applied += 1;
-          }
-        }
-        if (detailMember) next = { ...next, member: { ...next.member, ...detailMember } };
-        if (applied) {
-          onChange(next);
-          toast.success(`已导入 ${applied} 个商云宝报表`);
-        } else {
-          toast.warning("没有识别到可导入的报表");
-        }
-      } else {
-        const res = await summarizeWeeklyFiles(list, report.date, report.endDate || report.date);
-        if (res.days.length) {
-          const sum = (key: keyof (typeof res.days)[number]) => res.days.reduce((s, d) => s + Number(d[key]), 0);
-          const patch = {
-            customerCount: res.summary.customerCount,
-            quickRevenue: res.summary.total,
-            revenue: {
-              table: sum("table"),
-              product: sum("product"),
-              coach: sum("coach"),
-              other: 0,
-              remark: report.revenue.remark,
-            },
-            table: { ...report.table, openCount: res.summary.openCount },
-            member: {
-              ...report.member,
-              rechargeAmount: res.member.rechargeAmount,
-              tableCardRecharge: res.member.tableCardRecharge,
-              rechargeGiftAmount: res.member.rechargeGiftAmount,
-              consumeAmount: res.member.consumeAmount,
-              tableCardConsume: res.member.tableCardConsume,
-              giftCardConsume: res.member.giftCardConsume,
-            },
-            products: res.products,
-            productQty: res.productTotals.qty,
-            productCost: res.productTotals.cost,
-            groupon: [
-              {
-                platform: "美团",
-                verifyCount: res.groupon["美团"].verifyCount,
-                verifyAmount: res.groupon["美团"].verifyAmount,
-                newCustomerCount: 0,
-                refundCount: 0,
-                refundAmount: 0,
-                settledAmount: 0
-              },
-              {
-                platform: "抖音",
-                verifyCount: res.groupon["抖音"].verifyCount,
-                verifyAmount: res.groupon["抖音"].verifyAmount,
-                newCustomerCount: 0,
-                refundCount: 0,
-                refundAmount: 0,
-                settledAmount: 0
-              },
-            ],
-          };
-          onChange(applyImportPatch(report, patch) as Report);
-          toast.success(`已按 ${res.days.length} 天汇总导入`);
-        } else {
-          toast.warning("区间内没有识别到经营数据，请检查日期范围或报表文件");
-        }
-      }
-    } catch (err) {
-      toast.error(`导入出错：${(err as Error).message || err}`);
-    } finally {
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
+  const abnormalOptions = useMemo(() => {
+    const setOf = new Set<string>([...(settings.abnormalTypes || []), ...report.abnormal.map((a) => a.type).filter(Boolean)]);
+    return Array.from(setOf);
+  }, [settings.abnormalTypes, report.abnormal]);
 
   const hasProducts = report.products.some((p) => p.name);
   const prodSum = productSummary(report);
@@ -222,13 +172,15 @@ export default function DataEntry({
     const ov = key === "existingMemberRecharge" ? toNumber(v) : existingRecharge;
     setNested("member", { [key]: v, rechargeAmount: round2(nv + ov) });
   };
-  const targetHint =
-    isDay || periodType === "week"
-      ? `月度目标 ${money(settings.monthTarget)}`
-      : report.periodTarget
-        ? `本期目标 ${money(report.periodTarget)}`
-        : "未设本期目标";
+  const targetHint = isDay
+    ? `月度目标 ${money(settings.monthTarget)}`
+    : report.periodTarget
+      ? `本期目标 ${money(report.periodTarget)}`
+      : "未设本期目标（显示日均）";
   const diffTone = rm.diff > 0 ? "danger" : rm.diff < 0 ? "success" : "default";
+
+  const aggMeta = report.aggregationMeta;
+  const missingShown = aggMeta ? aggMeta.missingDates.slice(0, 8) : [];
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -243,25 +195,11 @@ export default function DataEntry({
 
   return (
     <div className="mx-auto w-full max-w-[1040px]">
-      <input
-        ref={fileRef}
-        type="file"
-        multiple
-        accept=".xlsx,.xls,.csv"
-        hidden
-        onChange={(e) => handleImportFiles(e.target.files)}
-      />
       <PageHeader
         title="报告数据"
-        description={`填入数据，自动生成${PERIOD_LABEL[periodType]}`}
+        description={`手动填入数据，自动生成${PERIOD_LABEL[periodType]}`}
         actions={
           <>
-            <Button variant="outline" onClick={() => fileRef.current?.click()}>
-              <FolderSearch /> 导入商云宝报表
-            </Button>
-            <Button variant="outline" onClick={onGoImport}>
-              <Upload /> 手动导入
-            </Button>
             <Button variant="outline" onClick={onSave}>
               <Save /> 保存
             </Button>
@@ -274,17 +212,13 @@ export default function DataEntry({
         <MetricCard
           label="总营收（经营收入）"
           value={money(metrics.total)}
-          hint="商云宝营业额 + 团购核销净额"
+          hint="现场营业额 + 团购核销净额"
           icon={<Banknote className="size-4" />}
         />
         <MetricCard
           label="客单价"
           value={ticket === null ? "-" : money(ticket)}
-          hint={
-            report.customerCount
-              ? `客单总数 ${report.customerCount}（总营收 ÷ 客单总数）`
-              : "填「客单总数」或导入经营报表后自动计算"
-          }
+          hint={report.customerCount ? `客单总数 ${report.customerCount}（总营收 ÷ 客单总数）` : "填「客单总数」后自动计算"}
           icon={<TrendingUp className="size-4" />}
         />
         <MetricCard
@@ -293,6 +227,14 @@ export default function DataEntry({
           hint={targetHint}
           icon={<Target className="size-4" />}
         />
+        {!isDay ? (
+          <MetricCard
+            label="日均营收"
+            value={money(metrics.dailyAverage ?? 0)}
+            hint="总营收 ÷ 天数"
+            icon={<TrendingUp className="size-4" />}
+          />
+        ) : null}
         <MetricCard
           label="对账差异"
           value={signedMoney(rm.diff)}
@@ -305,7 +247,7 @@ export default function DataEntry({
       <div className="flex flex-col gap-4">
         <SectionCard
           title="报告周期"
-          subtitle="选择周期类型和日期范围，日报/周报/季报/半年报/年报通用"
+          subtitle={isDay ? "日报只填当天" : "自由选择起止日期，点「从日报汇总」自动合计区间内的日报"}
           icon={<CalendarDays className="size-4" />}
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -313,27 +255,43 @@ export default function DataEntry({
               <SelectInput value={periodType} onChange={applyPeriodType} options={PERIOD_TYPES.map((t) => ({ value: t.value, label: t.label }))} />
             </Field>
             <Field label="起始日期">
-              <Input type="date" className="nums h-9 bg-card" value={report.date} onChange={(e) => set({ date: e.target.value })} />
+              <Input type="date" className="nums h-9 bg-card" value={report.date} onChange={(e) => setStartDate(e.target.value)} />
             </Field>
             <Field label="结束日期" hint={isDay ? "日报只填当天" : undefined}>
               <Input
                 type="date"
                 className="nums h-9 bg-card"
-                value={report.endDate || report.date}
+                value={endDate}
                 disabled={isDay}
+                min={report.date}
                 onChange={(e) => set({ endDate: e.target.value })}
               />
             </Field>
-            <Field label="本期目标" hint={isDay || periodType === "week" ? "默认用月度目标" : "季/半年/年报填周期目标"}>
-              <NumberInput
-                value={target ?? ""}
-                disabled={isDay || periodType === "week"}
-                onChange={(v) => set({ periodTarget: v })}
-              />
+            <Field label="本期目标" hint={isDay ? "默认用月度目标" : "选填，用于目标达成率"}>
+              <NumberInput value={report.periodTarget ?? ""} disabled={isDay} onChange={(v) => set({ periodTarget: v })} />
             </Field>
           </div>
+
+          {!isDay ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {PRESETS.map((p) => (
+                <Button
+                  key={p.label}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => applyPreset(p.range)}
+                >
+                  {p.label}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" size="sm" onClick={resetRange}>
+            <Button onClick={runAggregate}>
+              <Layers /> {isDay ? "载入已保存日报" : "从日报汇总"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => (isDay ? applyPeriodType("day") : applyPeriodType("custom"))}>
               <RefreshCw /> 回到当前{PERIOD_LABEL[periodType]}
             </Button>
             <span className="text-[12px] text-muted-foreground">
@@ -345,11 +303,24 @@ export default function DataEntry({
               {targetRate !== null ? ` ｜ 目标达成 ${targetRate.toFixed(1)}%（${targetHint}）` : ""}
             </span>
           </div>
+
+          {aggMeta ? (
+            <div className="flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-[12px] text-muted-foreground">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                已汇总 <b className="text-foreground">{aggMeta.dayCount}</b> / {aggMeta.rangeDays} 天日报
+                {aggMeta.missingDates.length
+                  ? `；缺少：${missingShown.join("、")}${aggMeta.missingDates.length > missingShown.length ? ` 等 ${aggMeta.missingDates.length} 天` : ""}`
+                  : ""}
+                。修改日期后可重新点「从日报汇总」刷新。
+              </span>
+            </div>
+          ) : null}
         </SectionCard>
 
         <SectionCard
           title="营收数据"
-          subtitle="总营收 = 商云宝营业额 + 团购核销净额（经营收入口径，不含储值充值）"
+          subtitle="总营收 = 现场营业额 + 团购核销净额（经营收入口径，不含储值充值）"
           icon={<Banknote className="size-4" />}
         >
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -362,7 +333,7 @@ export default function DataEntry({
             <Field label="助教费收入">
               <NumberInput value={report.revenue.coach} onChange={(v) => setNested("revenue", { coach: v })} />
             </Field>
-            <Field label="客单总数" hint="客单价 = 总营收 ÷ 客单总数，导入经营报表也会自动带入">
+            <Field label="客单总数" hint="客单价 = 总营收 ÷ 客单总数">
               <NumberInput value={report.customerCount ?? ""} step="1" onChange={(v) => set({ customerCount: v })} />
             </Field>
           </div>
@@ -380,11 +351,7 @@ export default function DataEntry({
           </div>
         </SectionCard>
 
-        <SectionCard
-          title="台桌运营"
-          subtitle="用于计算台时利用率"
-          icon={<Table2 className="size-4" />}
-        >
+        <SectionCard title="台桌运营" subtitle="用于计算台时利用率" icon={<Table2 className="size-4" />}>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <Field label="开台数">
               <NumberInput value={report.table.openCount} onChange={(v) => setNested("table", { openCount: v })} step="1" />
@@ -462,7 +429,7 @@ export default function DataEntry({
             <Field label="充值赠送金额" hint="赠送的是台桌费，记入礼金卡">
               <NumberInput value={report.member.rechargeGiftAmount} onChange={(v) => setNested("member", { rechargeGiftAmount: v })} />
             </Field>
-            <Field label="台费卡充值" hint="商云宝报表「台费卡充值」，通常为 0">
+            <Field label="台费卡充值" hint="通常为 0">
               <NumberInput value={report.member.tableCardRecharge ?? 0} onChange={(v) => setNested("member", { tableCardRecharge: v })} />
             </Field>
             <Field label="新增会员数">
@@ -499,10 +466,10 @@ export default function DataEntry({
                 <tr className="border-b bg-muted/40">
                   <td className="px-3 py-2 font-medium">总营收（经营收入）</td>
                   <td className="nums px-3 py-2 text-right font-semibold">{money(metrics.total)}</td>
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">商云宝营业额+团购核销净额</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">现场营业额+团购核销净额</td>
                 </tr>
                 <tr className="border-b">
-                  <td className="px-3 py-2 font-medium">商云宝营业额（参考）</td>
+                  <td className="px-3 py-2 font-medium">现场营业额（分项合计）</td>
                   <td className="nums px-3 py-2 text-right">{money(direct)}</td>
                   <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">台桌+商品+教练+其他</td>
                 </tr>
@@ -514,7 +481,7 @@ export default function DataEntry({
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">台费卡充值（预收款）</td>
                   <td className="nums px-3 py-2 text-right">{money(report.member.tableCardRecharge ?? 0)}</td>
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">商云宝报表「台费卡充值」</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">台费卡充值金额</td>
                 </tr>
                 <tr className="border-b">
                   <td className="px-3 py-2 font-medium">储值卡消费</td>
@@ -551,9 +518,7 @@ export default function DataEntry({
                   <td className="nums px-3 py-2 text-right">
                     {money(rm.actualReceived)} / {money(rm.expectedRevenue)}
                   </td>
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">
-                    实收=现金+农商−现金存入−团购结算
-                  </td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">实收=现金+农商−现金存入−团购结算</td>
                 </tr>
                 <tr className={rm.diff > 0 ? "bg-red-50" : rm.diff < 0 ? "bg-emerald-50" : ""}>
                   <td className="px-3 py-2 font-medium">差异</td>
@@ -570,7 +535,7 @@ export default function DataEntry({
                   </td>
                 </tr>
                 <tr className="border-b">
-                  <td className="px-3 py-2 font-medium">累计差额（同周期全部日报）</td>
+                  <td className="px-3 py-2 font-medium">累计差额（全部日报）</td>
                   <td className="nums px-3 py-2 text-right">{signedMoney(metrics.reconcileTotal)}</td>
                   <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">
                     累计实收−应到账；接近 0 = 多为到账时间差
@@ -589,10 +554,10 @@ export default function DataEntry({
             </div>
           ) : null}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="差异原因" hint="从固定原因中选择">
+            <Field label="差异原因" hint="从固定原因中选择（选择后视为已解释）">
               <SelectInput
                 value={report.reconciliation.diffReason || ""}
-                onChange={(v) => setNested("reconciliation", { diffReason: v })}
+                onChange={(v) => setNested("reconciliation", { diffReason: v, diffStatus: v ? "explained" : "" })}
                 options={settings.diffReasons}
                 placeholder="选择差异原因"
               />
@@ -604,17 +569,13 @@ export default function DataEntry({
                 />
               </div>
             </Field>
-            <Field label="商云宝错误记录">
+            <Field label="银行流水备注">
               <TextInput value={report.reconciliation.systemError || ""} onChange={(v) => setNested("reconciliation", { systemError: v })} placeholder="选填" />
             </Field>
           </div>
         </SectionCard>
 
-        <SectionCard
-          title="商品与毛利"
-          subtitle="成本价 = 商品成本 ÷ 销售数量，导入商品综合报表后自动计算"
-          icon={<Boxes className="size-4" />}
-        >
+        <SectionCard title="商品与毛利" subtitle="成本价 = 商品成本 ÷ 销售数量；商品明细按商品逐个填写" icon={<Boxes className="size-4" />}>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
             <Field label="商品销售额">
               <NumberInput value={report.revenue.product} onChange={(v) => setNested("revenue", { product: v })} />
@@ -657,9 +618,7 @@ export default function DataEntry({
                       const qty = toNumber(p.saleQty);
                       const amount = toNumber(p.saleAmount);
                       const profitVal = toNumber(p.profit);
-                      const cost = profitVal
-                        ? Math.round(Math.max(0, amount - profitVal) * 100) / 100
-                        : toNumber(p.saleCost);
+                      const cost = profitVal ? Math.round(Math.max(0, amount - profitVal) * 100) / 100 : toNumber(p.saleCost);
                       const profit = Math.round((amount - cost) * 100) / 100;
                       return (
                         <TableRow key={p.name}>
@@ -678,14 +637,119 @@ export default function DataEntry({
           ) : null}
         </SectionCard>
 
-        <SectionCard title="备注" subtitle="异常、客诉、复盘结论，会进入报告" icon={<ClipboardCheck className="size-4" />}>
-          <Textarea
-            rows={4}
-            className="bg-card"
-            value={report.notes}
-            placeholder="如：本期经营小结、需要跟进的事项"
-            onChange={(e) => set({ notes: e.target.value })}
-          />
+        <SectionCard
+          title="异常记录"
+          subtitle="清台销单、改价、删除订单等异常情况，会进入报告与微信文案"
+          icon={<AlertTriangle className="size-4" />}
+        >
+          <div className="overflow-x-auto rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  <TableHead className="min-w-[150px]">类型</TableHead>
+                  <TableHead className="min-w-[80px]">次数</TableHead>
+                  <TableHead className="min-w-[100px]">金额</TableHead>
+                  <TableHead className="min-w-[100px]">操作人</TableHead>
+                  <TableHead className="min-w-[160px]">备注</TableHead>
+                  <TableHead className="w-[50px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {report.abnormal.map((a, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="p-1.5">
+                      <SelectInput
+                        value={a.type}
+                        onChange={(v) =>
+                          set({ abnormal: report.abnormal.map((x, j) => (j === i ? { ...x, type: v } : x)) })
+                        }
+                        options={abnormalOptions}
+                      />
+                    </TableCell>
+                    <TableCell className="p-1.5">
+                      <NumberInput
+                        value={a.count}
+                        step="1"
+                        onChange={(v) => set({ abnormal: report.abnormal.map((x, j) => (j === i ? { ...x, count: v } : x)) })}
+                      />
+                    </TableCell>
+                    <TableCell className="p-1.5">
+                      <NumberInput
+                        value={a.amount}
+                        onChange={(v) => set({ abnormal: report.abnormal.map((x, j) => (j === i ? { ...x, amount: v } : x)) })}
+                      />
+                    </TableCell>
+                    <TableCell className="p-1.5">
+                      <TextInput
+                        value={a.operator}
+                        onChange={(v) => set({ abnormal: report.abnormal.map((x, j) => (j === i ? { ...x, operator: v } : x)) })}
+                      />
+                    </TableCell>
+                    <TableCell className="p-1.5">
+                      <TextInput
+                        value={a.remark}
+                        onChange={(v) => set({ abnormal: report.abnormal.map((x, j) => (j === i ? { ...x, remark: v } : x)) })}
+                      />
+                    </TableCell>
+                    <TableCell className="p-1.5">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="删除此行"
+                        onClick={() => set({ abnormal: report.abnormal.filter((_, j) => j !== i) })}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              set({
+                abnormal: [
+                  ...report.abnormal,
+                  { type: settings.abnormalTypes[0] || "", count: 0, amount: 0, operator: "", remark: "" },
+                ],
+              })
+            }
+          >
+            <Plus /> 添加一行
+          </Button>
+        </SectionCard>
+
+        <SectionCard title="备注" subtitle="完成事项、经营小结与库存预警，会进入报告" icon={<ClipboardCheck className="size-4" />}>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="完成事项" hint="如：设备维修完成、员工培训等">
+              <Textarea
+                rows={4}
+                className="bg-card"
+                value={report.done}
+                placeholder="本期完成的事项，每行一条"
+                onChange={(e) => set({ done: e.target.value })}
+              />
+            </Field>
+            <Field label="经营小结 / 待办" hint="复盘结论与需要跟进的事项">
+              <Textarea
+                rows={4}
+                className="bg-card"
+                value={report.notes}
+                placeholder="如：本期经营小结、需要跟进的事项"
+                onChange={(e) => set({ notes: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="库存预警" hint="选填，如：红牛剩 5 箱、纸巾告急">
+            <TextInput
+              value={report.lowStockItems}
+              onChange={(v) => set({ lowStockItems: v })}
+              placeholder="需要补货的商品"
+            />
+          </Field>
         </SectionCard>
       </div>
     </div>
